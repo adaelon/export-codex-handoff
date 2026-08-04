@@ -32,6 +32,7 @@ function validateStrictShape(index) {
     "anchors",
     "preservationLedger",
     "semanticCoverage",
+    "evidenceKeyMap",
     "integrity",
   ]), "Evidence Index");
   assertKeys(index.source, new Set(["rolloutPath", "sourceRevision", "sourceBytes"]), "Evidence Index source");
@@ -82,6 +83,45 @@ function validateStrictShape(index) {
   }
   if (index.semanticCoverage !== undefined) {
     validateSemanticCoverageShape(index.semanticCoverage, index);
+  }
+  if (index.evidenceKeyMap !== undefined) {
+    validateEvidenceKeyMapShape(index.evidenceKeyMap, index);
+  }
+}
+
+function validateEvidenceKeyMapShape(map, index) {
+  if (!map || typeof map !== "object" || Array.isArray(map)) {
+    invalid("Handoff Evidence Key map must be an object");
+  }
+  assertKeys(map, new Set(["formatVersion", "kind", "entries"]), "Handoff Evidence Key map");
+  if (
+    map.formatVersion !== 1 ||
+    map.kind !== "codex-handoff-evidence-key-map" ||
+    !Array.isArray(map.entries) ||
+    map.entries.length === 0
+  ) {
+    invalid("Handoff Evidence Key map must be a non-empty v1 map");
+  }
+  const knownAnchors = new Set(index.anchors.map((entry) => entry.anchor.anchorId));
+  const claimIds = new Set();
+  for (const [entryIndex, entry] of map.entries.entries()) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      invalid(`Handoff Evidence Key E${entryIndex + 1} must be an object`);
+    }
+    assertKeys(entry, new Set(["key", "claimId", "anchors"]), "Handoff Evidence Key entry");
+    if (
+      entry.key !== `E${entryIndex + 1}` ||
+      typeof entry.claimId !== "string" ||
+      !entry.claimId ||
+      claimIds.has(entry.claimId) ||
+      !Array.isArray(entry.anchors) ||
+      entry.anchors.length === 0 ||
+      entry.anchors.some((anchorId) => typeof anchorId !== "string" || !knownAnchors.has(anchorId)) ||
+      new Set(entry.anchors).size !== entry.anchors.length
+    ) {
+      invalid(`Handoff Evidence Key ${entry.key ?? "<missing>"} does not resolve exactly`);
+    }
+    claimIds.add(entry.claimId);
   }
 }
 
@@ -181,6 +221,14 @@ export function validateEvidenceIndex(index) {
 export function attachSemanticCoverage(index, semanticCoverage) {
   const next = structuredClone(index);
   next.semanticCoverage = structuredClone(semanticCoverage);
+  delete next.integrity.indexDigest;
+  next.integrity.indexDigest = sha256Text(canonicalStringify(next));
+  return validateEvidenceIndex(next);
+}
+
+export function attachEvidenceKeyMap(index, evidenceKeyMap) {
+  const next = structuredClone(index);
+  next.evidenceKeyMap = structuredClone(evidenceKeyMap);
   delete next.integrity.indexDigest;
   next.integrity.indexDigest = sha256Text(canonicalStringify(next));
   return validateEvidenceIndex(next);

@@ -39,7 +39,7 @@ Prepare options:
   --frame-projection-chars <count> Maximum Frame Projection characters (default: 20000)
   --map-input-chars <count> Maximum evidence, dictionary, and projection characters (default: 100000)
   --map-output-chars <count> Maximum aggregate accepted MAP output characters (default: 3x REDUCE target for sparse; 1x for continuation)
-  --map-result-mode <mode>  MAP contract: sparse-map-v1 (default) or continuation-map-v1
+  --map-result-mode <mode>  MAP contract: sparse-map-v1 (default), continuation-map-v1, or continuation-map-v2
   --codex-home <path>      Override CODEX_HOME for Source Thread discovery
   --help                   Show this help`;
 }

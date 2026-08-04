@@ -3,6 +3,7 @@ import { buildEvidenceIndex } from "./evidence-index.mjs";
 import { findSourceThread, parseSourceThread, ExportHandoffError } from "./source-thread.mjs";
 import { captureWorkspaceSnapshot } from "./workspace-snapshot.mjs";
 import { buildTerminalStateArtifacts } from "./terminal-state.mjs";
+import { buildProgressEvidence } from "./progress-evidence.mjs";
 
 export async function buildEvidencePack(sessionId, options = {}) {
   const source = await findSourceThread(sessionId, { codexHome: options.codexHome });
@@ -62,7 +63,6 @@ export async function buildEvidencePack(sessionId, options = {}) {
     sourceContinuation: parsed.sourceContinuation,
     ...terminalArtifacts,
   };
-  const evidenceChars = JSON.stringify(evidencePack).length;
   const evidenceIndex = buildEvidenceIndex({
     sessionId: source.sessionId,
     source: evidencePack.source,
@@ -70,6 +70,11 @@ export async function buildEvidencePack(sessionId, options = {}) {
     entries: evidenceEntries,
     preservationLedger,
   });
+  evidencePack.progressEvidence = buildProgressEvidence(parsed.turns, evidenceIndex, {
+    maxInputChars: options.maxProgressInputChars,
+    maxDispatchChars: options.maxProgressDispatchChars,
+  });
+  const evidenceChars = JSON.stringify(evidencePack).length;
 
   return { ...evidencePack, evidenceChars, evidenceIndex };
 }

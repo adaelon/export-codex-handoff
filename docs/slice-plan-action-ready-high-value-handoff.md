@@ -1,6 +1,7 @@
 # Action-Ready High-Value Handoff Slices
 
-Status: accepted; implementation pending  
+Status: accepted; AH0-AH5 complete, AH6 pending
+
 Scope: make a fresh continuation task synthesize from already-formed knowledge before bounded verification, while keeping complete evidence retrievable but outside its default context.
 Decision: [ADR-0013 Action-Ready Handoff Hot/Cold Boundary](./adr/0013-action-ready-handoff-hot-cold-boundary.md).
 
@@ -169,6 +170,8 @@ Source Thread + workspace observations
 
 **Done when**: the fixture reproduces the failure class in which evidence-valid output lacks a usable draft, repeats the full objective as an exclusion, and spends most readable content on audit detail; the expected v2 contract rejects it with `HANDOFF_NOT_ACTIONABLE` or `HANDOFF_LOW_VALUE`.
 
+**Implementation evidence**: [action-ready-handoff-fixtures.mjs](../skills/export-codex-handoff/tests/fixtures/action-ready-handoff-fixtures.mjs) contains only synthetic static-review messages, two successful code reads, one existence probe, user-visible findings, an interrupted terminal turn, and generated workspace observations. [action-ready-ah0.test.mjs](../skills/export-codex-handoff/tests/action-ready-ah0.test.mjs) drives that fixture through the existing Source Thread parser, Evidence Index validator, Frame validator, REDUCE validator, and Handoff renderer without changing runtime code. The frozen output is 4,860 characters: audit/boilerplate occupies 3,476 of 4,386 readable section characters (79.25%); ten inline evidence suffixes occupy 1,653 characters (37.21%) and expose 21 raw Anchor plus nine raw Claim references; all four action-ready sections are absent and zero of two requested deliverables are ready. The full goal `看代码，说明流程和复杂度，不要跑测试` is repeated as the exclusion instead of only `不要跑测试`; the expected v2 comparator therefore returns both `HANDOFF_NOT_ACTIONABLE` and `HANDOFF_LOW_VALUE`. AH0 passes 3/3 focused tests and the repository passes 132/132.
+
 ### Slice AH1: Progress Evidence and Inspection Ledger
 
 **Input**: AH0 fixtures, parsed assistant messages, Tool Receipts, and the existing complete Evidence Index.
@@ -178,6 +181,8 @@ Source Thread + workspace observations
 **Does not do**: change Critical Anchor semantics, MAP output, REDUCE, Handoff rendering, or promote every successful result into the Preservation Ledger.
 
 **Done when**: assistant progress and successful content reads are selectable; existence probes and mechanical success stay cold; duplicate scopes fold deterministically; every selected receipt is classified exactly once; the complete Evidence Index and existing Critical Anchor digest remain unchanged.
+
+**Implementation evidence**: [progress-evidence.mjs](../skills/export-codex-handoff/scripts/lib/progress-evidence.mjs) now projects user-visible assistant messages and successful content reads into `codex-handoff-progress-evidence` v1 under independent 32,000-character input and 24,000-character dispatch defaults. Each successful non-input Tool Receipt receives exactly one deterministic operation class; only `content_inspection` enters the bounded payload, while classification coverage remains a count plus digest. Exact duplicate `{ location, symbols, scope }` reads retain the latest output reference and leave earlier receipts Cold. [evidence-pack.mjs](../skills/export-codex-handoff/scripts/lib/evidence-pack.mjs) attaches the validated projection only after the complete Evidence Index and Critical-only Preservation Ledger exist, so neither index integrity nor the Critical Anchor digest changes. [action-ready-ah1.test.mjs](../skills/export-codex-handoff/tests/action-ready-ah1.test.mjs) passes 3/3, AH0 plus Evidence Pack focused regression passes 9/9, and the complete repository suite passes 135/135.
 
 ### Slice AH2: Versioned Working Synthesis contract
 
@@ -189,6 +194,8 @@ Source Thread + workspace observations
 
 **Done when**: every requested deliverable is `ready`, `partial`, or `blocked`; every retained finding has exact evidence; every content inspection is synthesized or explicitly marked for targeted follow-up; malformed relations and over-budget candidates fail deterministically; compatibility modes retain byte-contract routing.
 
+**Implementation evidence**: [map-worker.mjs](../skills/export-codex-handoff/scripts/lib/map-worker.mjs) adds the immutable `continuation-map-v2` route while retaining the v1 mode and its 4,000-character raw ceiling; v2 deterministic completion has an independent 16,000-character cap. [validation.mjs](../skills/export-codex-handoff/scripts/lib/validation.mjs) validates local Finding-to-Claim, Deliverable-to-Finding, and complete Inspection-to-Finding/reread-policy relations, derives stable global Finding IDs, and validates Working Synthesis plus Resume Policy references without widening the v1 candidate. [task-workflow-core.mjs](../skills/export-codex-handoff/scripts/lib/task-workflow-core.mjs) adds one bounded `progress_map` dispatch, merges its completed relations into `workingSynthesisInput`, emits the four-field action-ready REDUCE contract, and leaves v2 publication fail-closed for the later gates and renderer. [continuation-map-v2-worker-contract.md](../skills/export-codex-handoff/references/continuation-map-v2-worker-contract.md) publishes the isolated Worker contract. [action-ready-ah2.test.mjs](../skills/export-codex-handoff/tests/action-ready-ah2.test.mjs) passes 3/3; the directly affected AH0–AH2/R3–R5/worker/publication set passes 41/41; the complete repository suite passes 138/138.
+
 ### Slice AH3: Information Value and Actionability gates
 
 **Input**: AH2 completed tables, the frozen task profile, deliverable roots, and complete Cold Evidence.
@@ -198,6 +205,10 @@ Source Thread + workspace observations
 **Does not do**: judge prose quality, delete Cold Evidence, infer missing conclusions, or weaken continuation coverage.
 
 **Done when**: every hot fact is root-reachable and evidence-backed; existence/path confirmations, mechanical success, raw coverage, and orphan Claims cannot enter Hot Context; the AH0 output fails; a partial but useful synthesis with named uncertainties can pass; repeated validation produces identical keys and projections.
+
+**Implementation evidence**: [validation.mjs](../skills/export-codex-handoff/scripts/lib/validation.mjs) now runs task-profile Actionability before deterministic Information Value projection. Review, research, and diagnosis continuations require a non-empty `draft_ready` or `partial` synthesis, an exact status for every deliverable, at least one usable deliverable, `synthesize_first`, both exploration prohibitions, and no more than three targeted reads; partial synthesis also requires a named uncertainty. The projection admits only the frozen objective, deliverable Findings, exact Claim-table constraints and next actions, and active decisions, then assigns stable compact `E<n>` Handoff Evidence Keys from Claim-ID order. Raw Claim IDs, Evidence Anchors, existence/mechanical verification Findings, orphan Claims, and audit coverage fail or remain Cold. [task-workflow-core.mjs](../skills/export-codex-handoff/scripts/lib/task-workflow-core.mjs) supplies the frozen task profile, global Claim table, Working Synthesis input, and complete Evidence Index to the v2 REDUCE preflight while leaving v1 routes and the AH5 renderer fuse unchanged. [action-ready-ah3.test.mjs](../skills/export-codex-handoff/tests/action-ready-ah3.test.mjs) locks stable projection, Cold routing, low-value rejection, useful partial synthesis, and rejection of the evidence-valid AH0 result through REDUCE preflight.
+
+AH3 passes 4/4, the directly affected AH0–AH3/R3–R5/worker/publication set passes 44/44, and the complete repository suite passes 142/142.
 
 ### Slice AH4: Clause-level explicit exclusions
 
@@ -209,6 +220,8 @@ Source Thread + workspace observations
 
 **Done when**: `看代码，说明流程和复杂度，不要跑测试` yields one complete objective and exactly one `不要跑测试` exclusion; comma lists, English negation, multiple exclusions, and path punctuation remain deterministic; existing standalone exclusions stay compatible.
 
+**Implementation evidence**: [compression-frame.mjs](../skills/export-codex-handoff/scripts/lib/compression-frame.mjs) now derives source-ordered exact spans from exclusion markers, closes them at deterministic hard boundaries, separates multiple marked clauses, and retains comma payload lists plus dotted path punctuation without changing the complete `currentGoal`. Every exclusion Claim keeps the goal anchors and replay-stable identity. [action-ready-ah4.test.mjs](../skills/export-codex-handoff/tests/action-ready-ah4.test.mjs) covers the mixed Chinese goal, English negation, multiple clauses, negative comma lists, dotted paths, standalone compatibility, and a positive-only goal; the AH0 fixture now proves that only the exclusion defect changed while the later AH5 failure class remains. AH4 passes 4/4, AH0–AH4 pass 17/17, the Frame/TS/continuation compatibility set passes 69/69, and the complete repository suite passes 146/146.
+
 ### Slice AH5: High-value renderer and synthesize-first consumption
 
 **Input**: AH3 Hot Context, AH4 exclusions, Handoff Evidence Keys, and the complete Evidence Index.
@@ -218,6 +231,8 @@ Source Thread + workspace observations
 **Does not do**: embed Cold Evidence, raw Anchor/Claim lists, complete terminal payloads, or allow arbitrary source exploration.
 
 **Done when**: the AH0 fixture renders no existence confirmation, raw coverage list, raw Terminal JSON, Git probe, or mechanical verification; useful synthesis precedes audit metadata; Evidence Keys resolve exactly; a consuming task receives `synthesize_first`, zero pre-draft reads, no broad search, and at most three targeted-read capabilities.
+
+**Implementation evidence**: [render-action-ready-handoff.mjs](../skills/export-codex-handoff/scripts/lib/render-action-ready-handoff.mjs) is an isolated v2 renderer: it orders Objective/first deliverable, multiline Working Synthesis, Deliverable Status, confirmed findings/uncertainties, Inspected Evidence Map, Resume Policy, next actions/constraints, and a compact audit footer without calling or changing the legacy renderer. [validation.mjs](../skills/export-codex-handoff/scripts/lib/validation.mjs) now projects exact clause-level exclusions with their own stable Evidence Keys. [evidence-index.mjs](../skills/export-codex-handoff/scripts/lib/evidence-index.mjs) integrity-covers the exact `E<n> -> Claim ID -> Evidence Anchor[]` map, and [task-workflow-core.mjs](../skills/export-codex-handoff/scripts/lib/task-workflow-core.mjs) keeps v2 publication digest-bound, attaches that map transactionally, renders only Hot Context, and returns a structured consumer contract with zero pre-draft evidence reads. [action-ready-ah5.test.mjs](../skills/export-codex-handoff/tests/action-ready-ah5.test.mjs) locks ordering, multiline synthesis, Cold omission, exact key resolution, preflight mutation rejection, and synthesize-first consumption. AH5 passes 2/2 and the complete repository suite passes 148/148; installation synchronization and fresh live acceptance remain AH6.
 
 ### Slice AH6: Compatibility, packaging, and live continuation acceptance
 

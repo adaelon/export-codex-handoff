@@ -27,9 +27,19 @@ Dedicated Codex Compression Task
                  -> [continuation] Critical-Anchor source units + workspace observations only
                  -> continuation effective chunk budget derived from the 100k total-input gate
             -> compact Evidence Index builder/retriever
+            -> bounded Progress Evidence projector
+                 -> user-visible assistant progress + successful content inspections
+                 -> deterministic operation classes + exact-scope latest-read folding
+                 -> independent input/dispatch budgets + coverage digests
+                 -> existence, verification, mutation, and mechanical results remain cold
+            -> action-ready continuation-map-v2 planner
+                 -> one private progress_map dispatch for validated Progress Evidence
+                 -> unchanged Critical-only dispatches with empty action-ready relations
+                 -> 4k raw candidate + 16k deterministic completion gates
             -> Compression Frame input builder/validator
                  -> frozen frameId + canonical frameDigest
-                 -> v2 currentGoal + Accepted Proposal? + Terminal-State Claim
+                 -> byte-exact v2 currentGoal + clause-level extractive exclusions
+                 -> Accepted Proposal? + Terminal-State Claim
                  -> segment-local Evidence Reference Dictionaries
                  -> integer-only Frame Projection references + 20k projection gate
                  -> 100k evidence + dictionary + projection MAP-input gate
@@ -48,19 +58,26 @@ Dedicated Codex Compression Task
             -> coordinator accepts digest-bound derived artifacts and receipts only
                  -> [sparse/legacy] deterministic full-summary parent fold
                  -> [continuation] one global Claim table + edge-only parent fold
+                 -> [continuation v2] Finding/Deliverable/Inspection tables from progress_map
                  -> deterministic Accepted Proposal/Terminal-State insertion exactly once
                  -> critical-only Continuation Coverage + claim-to-turn Semantic Coverage
             -> mode-routed REDUCE input builder
                  -> [continuation] compact frame + one Claim table + edge summaries
                  -> critical obligations + body-free deterministic projection policy
                  -> body-free continuation-authority Claim IDs
+                 -> [continuation v2] Working Synthesis input + action-ready output contract
                  -> 300k serialized-input gate
             -> active Codex task performs REDUCE
             -> non-consuming continuation REDUCE preflight
                  -> deterministic important locations + Preservation Coverage
                  -> claim-derived final provenance + exact candidate digest binding
+                 -> [continuation v2] task-profile Actionability gate
+                 -> [continuation v2] typed-root Hot Context projection
+                 -> compact Evidence Keys + separate exact audit map
             -> transactional Handoff and Evidence Index publisher
                  -> dedicated Accepted proposal and Terminal state sections
+                 -> [continuation v2] isolated execution-first Handoff v2 renderer
+                 -> [continuation v2] integrity-covered Evidence Key map + consumer contract
                  -> persisted failure report on terminal prepare/check/publish errors
                  -> fixed MAP generation/check-accept/REDUCE/publication metrics
 ```
@@ -127,10 +144,37 @@ in the complete Evidence Index. Exact identifier obligations come only from sele
 must pass URL/path syntax plus opaque-token hygiene. `retrieve` verifies the source revision and
 selected anchor digest; `verify-evidence` checks the index and every currently retrievable anchor.
 
+After the complete Evidence Index and Critical-only Preservation Ledger are fixed, the Progress
+Evidence projector independently scans user-visible assistant messages and successful non-input Tool
+Receipts. Every successful receipt receives exactly one operation class. Only content inspections
+become bounded inspection rows; existence probes, verification, mutation, and mechanical success stay
+Cold and contribute only to stable classification coverage. Exact duplicate content scopes fold to
+the latest output reference, while every earlier output remains retrievable in the Evidence Index.
+The projection records separate input and dispatch character metrics and a digest-bound budget pair;
+it does not enter existing MAP, REDUCE, or rendering routes.
+
+`continuation-map-v2` is a separate immutable new-run route. Preparation validates the existing
+Progress Evidence and adds exactly one bounded `progress_map` segment without adding its anchors to
+the Critical Preservation Ledger. Only that segment may author Finding-to-Claim,
+Deliverable-to-Finding, and Inspection-to-Finding/reread-policy relations; every content inspection
+must be disposed exactly once. Completion derives global Finding IDs and immutable inspection
+coordinates under a separate 16,000-character cap. Downstream keeps the existing Claim table and
+Continuation Coverage, then adds `workingSynthesisInput` plus a typed contract for Working
+Synthesis, Deliverable Status, Inspected Evidence Map, and Resume Policy. REDUCE preflight validates
+those relations and requires review, research, or diagnosis work to carry a usable synthesize-first
+draft with bounded reads. It then projects only the frozen objective, deliverable Findings, exact
+constraints and next actions, and active decisions into Hot Context. Compact `E<n>` keys replace raw
+Claim IDs and Evidence Anchors in that projection; the exact key map is integrity-covered by the
+published Evidence Index. The isolated AH5 renderer emits execution-first Handoff v2 Markdown and a
+consumer contract without changing the legacy renderer.
+
 The Compression Frame validator routes frozen legacy shapes separately from Frame v2. Frame v2 permits
-only the latest anchored user goal, exact Accepted Proposal or null, mandatory deterministic
-Terminal-State Claim, and extractive explicit exclusions; it requires the Critical Anchor Preservation
-Ledger and freezes a canonical digest in managed control state. New runs project only segment-reachable obligations to Workers and bind MAP summaries
+only the latest anchored byte-exact user goal, exact Accepted Proposal or null, mandatory deterministic
+Terminal-State Claim, and source-ordered clause-level explicit exclusions. Exclusion extraction starts
+at supported negative markers, keeps comma payload lists and path punctuation intact, and never rewrites
+the complete goal; standalone exclusions retain their existing exact text. The Frame requires the
+Critical Anchor Preservation Ledger and freezes a canonical digest in managed control state. New runs
+project only segment-reachable obligations to Workers and bind MAP summaries
 plus the REDUCE result to the full frame's exact `frameId` and `frameDigest`.
 
 Legacy and sparse MAP validation accepts a summarized turn only when it reaches at least one unique claim backed by an
@@ -173,11 +217,14 @@ anchors, and freezes the exact serialized digest. Publication refuses an uncheck
 candidate. Terminal `prepare-reduce`, `validate-reduce`, and `publish` errors retain a bounded
 `failure-report.json` with diagnostics, phase timings, Worker metrics, and the managed workdir.
 
-The v2 publisher renders both candidates and validates the Handoff budget, Evidence Index budget,
-coverage graph, frozen frame, source-revision binding, and live Source Thread revision before either
-output is visible. It creates both files exclusively. If the second create fails, it removes only a
-first file whose filesystem identity still matches that publication attempt. Cleanup runs after the
-pair is durable; cleanup failure retains the pair and the managed work directory for diagnosis.
+The v2 publisher validates the Handoff budget, Evidence Index budget, coverage graph, frozen frame,
+source-revision binding, and live Source Thread revision before either output is visible. Sparse,
+missing-mode, and `continuation-map-v1` routes retain the legacy renderer. `continuation-map-v2`
+instead renders only gate-validated Hot Context, persists exact `E<n>` resolution in the Evidence
+Index, and returns the Resume Policy as a structured consumer contract. Both public files are created
+exclusively; if the second create fails, rollback removes only a first file whose filesystem identity
+still matches that publication attempt. Cleanup runs after the pair is durable; cleanup failure
+retains the pair and managed work directory for diagnosis.
 
 ## Data flow
 
@@ -189,11 +236,21 @@ Source Thread UUID
        -> checkpoint revision == Git HEAD: current; otherwise historical-only
   -> Source terminal + compression-time workspace observation -> one terminal_state Claim
   -> managed Evidence Pack + compact Evidence Index
+  -> user-visible assistant messages + successful Tool Receipts
+       -> deterministic operation classification
+       -> latest output per exact content scope
+       -> bounded Progress Evidence + coverage/budget digests
+       -> non-content operations remain Cold Evidence
+  -> [continuation-map-v2] validated Progress Evidence -> one private progress_map dispatch
+       -> evidence-backed Findings -> requested Deliverable status
+       -> every content inspection -> Finding edges + reread policy
+       -> 4k candidate gate -> deterministic global IDs/coordinates -> 16k completed gate
   -> [continuation MAP plan] select Critical-Anchor source units + Critical workspace observations
        -> preserve complete Evidence Index + complete Source Thread turn-ID inventory
        -> derive effective evidence cap from total-input and projection budgets
   -> frame-input.json
-  -> active-task Frame v2 (goal + proposal? + terminal) -> frame.json -> validate + freeze digest
+  -> active-task Frame v2 (byte-exact goal + clause exclusions + proposal? + terminal)
+       -> frame.json -> validate + freeze digest
   -> bounded complete-turn or packed-fragment segment
   -> deterministic segment-local Evidence Reference Dictionary
        -> local evidence indexes + local exact-identifier indexes -> immutable dictionary digest
@@ -212,6 +269,10 @@ Source Thread UUID
   -> [continuation] completed tables -> one global Claim table + Critical Anchor disposition
        -> deterministic Accepted Proposal/Terminal-State Claims inserted once
        -> edge-only parent coverage + canonical non-critical ignored turn coverage
+  -> [continuation v2] completed progress table -> Working Synthesis input
+       -> global Finding-to-Claim bindings
+       -> exact Deliverable Status and Inspected Evidence Map projections
+       -> typed Working Synthesis and Resume Policy output contract
   -> [sparse/legacy] summaries + coverage + workspace + frozen frame + Preservation Ledger
   -> [continuation] compact frame + one Claim table + edge summaries + critical obligations
        -> body-free deterministic projection and authority-ID policy -> <=300k reduce-input.json
@@ -222,11 +283,22 @@ Source Thread UUID
        -> reconstruct important locations + category coverage
        -> require exact proposal/terminal projections
        -> derive final provenance + bind exact candidate digest
+       -> [continuation v2] validate Working Synthesis/Deliverable/Inspection/Resume relations
+       -> [continuation v2] require usable synthesize-first task state
+       -> [continuation v2] project typed-root Hot Context + stable Evidence Key map
+       -> [continuation v2] reject low-value/raw-audit context before digest binding
+  -> [continuation v2] attach exact Evidence Key map to the complete Evidence Index
+  -> [continuation v2] isolated Handoff v2 renderer
+       -> objective/first deliverable -> multiline synthesis -> status/findings/inspections
+       -> Resume Policy -> actions/constraints -> compact audit footer
+       -> synthesize-first consumer contract with zero pre-draft evidence reads
   -> validate live source revision + Handoff/Evidence Index/MAP-output budgets
   -> exclusive transactional publish of the preflight-bound candidate
        -> Handoff Markdown
-            -> Accepted proposal + Terminal state sections
+            -> [legacy renderer] Accepted proposal + Terminal state sections
+            -> [continuation v2] execution-first Hot Context only
        -> Evidence Index JSON + compact Semantic Coverage graph
+            -> [continuation v2] exact Handoff Evidence Key map
   -> fixed four-phase performanceMetrics + compatibility phaseTimingsMs
   -> remove managed temporary copies; retain both published artifacts
 ```
@@ -248,5 +320,6 @@ re-runs an indexed workspace observation and fails closed if its source revision
 - **Implemented sparse MAP bookkeeping**: [Sparse MAP Deterministic Bookkeeping](./adr/0009-sparse-map-deterministic-bookkeeping.md)
 - **Implemented coordinator-isolated sparse expansion**: [Worker-bound Sparse MAP Expansion](./adr/0010-worker-bound-sparse-map-expansion.md)
 - **Implemented retrieval/critical-coverage separation**: [Continuation-Grade Evidence Compression](./adr/0011-continuation-grade-evidence-compression.md)
+- **Action-ready Hot/Cold boundary and staged v2 route**: [Action-Ready Handoff Hot/Cold Boundary](./adr/0013-action-ready-handoff-hot-cold-boundary.md)
 
 - **Implemented version routing and transactional publication**: [Evidence-preserving compression slice plan](./slice-plan-evidence-preserving-compression.md#slice-6-transactional-publication-compatibility-and-end-to-end-evaluation)

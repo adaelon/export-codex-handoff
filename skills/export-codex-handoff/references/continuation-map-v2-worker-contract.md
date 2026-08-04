@@ -1,0 +1,82 @@
+# Action-ready Continuation MAP Worker Contract
+
+Read this file only for a `MapDispatch` whose `mapResultMode` is
+`continuation-map-v2`. Write one strict JSON object to `summaryPath`; do not write Markdown
+fences. The exact serialized candidate, including whitespace and its final newline, must not exceed
+the dispatch `maxMapOutputChars`, which is at most 4,000 characters. Deterministic completion is
+separately capped at 16,000 characters.
+
+## Output shape
+
+```text
+ActionReadyContinuationMapResult {
+  formatVersion: 2
+  kind: codex-handoff-continuation-map
+  frameId: string
+  frameDigest: sha256
+  segmentId: string
+  claims: ContinuationClaim[]
+  relations: ContinuationRelations
+  criticalExclusions: CriticalExclusion[]
+  findings: Array<{
+    localId: positive integer
+    claim: positive integer
+  }>
+  deliverables: Array<{
+    deliverableId: string
+    request: string
+    status: ready | partial | blocked
+    findingIds: positive integer[]
+    missingReason?: string
+  }>
+  inspectionDispositions: Array<{
+    inspectionId: string
+    findingIds: positive integer[]
+    rereadPolicy: do_not_reread | verify_only | targeted_followup
+  }>
+}
+```
+
+`ContinuationClaim`, `ContinuationRelations`, and `CriticalExclusion` retain the exact
+`continuation-map-v1` shapes. A Finding points to one local Claim of kind `completed_work`,
+`conflict`, `decision`, `rationale`, `lesson`, or `verification`; it does not repeat Claim text or
+evidence indexes. Every Finding must be reachable from at least one deliverable. `ready` and
+`partial` deliverables require Findings; `partial` and `blocked` deliverables require a non-empty
+`missingReason`.
+
+Only the dispatch whose private chunk has `stage: progress_map` may author non-empty `findings`,
+`deliverables`, or `inspectionDispositions`. Its bounded `progressEvidence` contains the complete
+selected inspection set. Copy each inspection's `outputEvidence.referenceId` as `inspectionId` and
+dispose every inspection exactly once:
+
+- `do_not_reread` or `verify_only` requires at least one Finding whose Claim cites that inspection's
+  output evidence;
+- `targeted_followup` explicitly leaves the scope available for a bounded later read and may have no
+  Finding;
+- existence probes, verification commands, mutations, and mechanical success never appear as
+  inspection dispositions because they are absent from Progress Evidence inspections.
+
+Non-progress dispatches write empty action-ready arrays while retaining or explicitly excluding
+their Critical Anchors through the unchanged continuation Claim contract. Do not emit global Claim
+IDs, Finding IDs, Evidence Anchor strings, REDUCE fields, raw Progress Evidence outside its private
+chunk, or prose outside the JSON object.
+
+## Deterministic completion
+
+Run the non-consuming check and completion in order:
+
+```text
+node <skill-dir>/scripts/export-handoff.mjs validate-map <WORK_DIR> <SEGMENT_ID> --check <DISPATCH_ID>
+node <skill-dir>/scripts/export-handoff.mjs validate-map <WORK_DIR> <SEGMENT_ID> --complete <DISPATCH_ID>
+```
+
+Completion preserves the v1 global Claim and relation derivation, derives each global Finding ID
+from its completed Claim ID, resolves inspection coordinates from immutable Progress Evidence, and
+writes one private completed result. The bounded receipt contains raw and completed digests plus
+their character counts. Return only that receipt to the coordinator.
+
+After all receipts are accepted, `prepare-reduce` produces one `workingSynthesisInput` with global
+Finding-to-Claim bindings, complete deliverable status, and the deterministic Inspected Evidence Map
+projection. It also emits `actionReadyOutputContract`, requiring `workingSynthesis`,
+`deliverableStatus`, `inspectedEvidenceMap`, and `resumePolicy`. This Worker does not publish a v2
+Handoff; publication remains fail-closed until the action-ready renderer is installed.

@@ -11,6 +11,7 @@ import {
   validateCompressionFrame,
 } from "./compression-frame.mjs";
 import {
+  attachEvidenceKeyMap,
   attachSemanticCoverage,
   buildEvidenceIndex,
   validateEvidenceIndex,
@@ -20,7 +21,10 @@ import { chunkEvidencePack } from "./chunking.mjs";
 import {
   CONTINUATION_MAP_CANDIDATE_MAX_CHARS,
   CONTINUATION_MAP_RESULT_MODE,
+  CONTINUATION_MAP_V2_COMPLETED_MAX_CHARS,
+  CONTINUATION_MAP_V2_RESULT_MODE,
   createMapDispatch,
+  isContinuationMapResultMode,
   SPARSE_MAP_RESULT_MODE,
   validateMapDispatch,
   validateMapReceipt,
@@ -36,23 +40,33 @@ import {
   validateReferenceFrameProjection,
 } from "./frame-projection.mjs";
 import {
+  buildActionReadyContinuationDownstream,
+  buildActionReadyContinuationParentCoverage,
   buildContinuationDownstream,
   buildContinuationParentCoverage,
   buildContinuationReduceProjections,
   buildSemanticCoverageGraph,
+  completeActionReadyContinuationMapResult,
   completeContinuationMapResult,
   deriveFinalProvenance,
   expandSparseMapResult,
   listMapClaims,
+  validateActionReadyHandoffGates,
   validateMapResult,
   validateReduceResult,
 } from "./validation.mjs";
+import { validateProgressEvidence } from "./progress-evidence.mjs";
 import {
   buildPerformanceMetrics,
   validateMapGenerationMetric,
   validateReduceGenerationMetric,
 } from "./performance-calibration.mjs";
 import { renderHandoff } from "./render-handoff.mjs";
+import {
+  buildActionReadyConsumerContract,
+  buildActionReadySuggestedContinuation,
+  renderActionReadyHandoff,
+} from "./render-action-ready-handoff.mjs";
 import { ExportHandoffError, validateSessionId } from "./source-thread.mjs";
 
 const WORKDIR_PREFIX = "codex-handoff-task-";
@@ -65,6 +79,23 @@ const REFERENCE_FRAME_PROJECTION_MODE = "reference-frame-projection-v1";
 const DETERMINISTIC_PARENT_COVERAGE_MODE = "deterministic-parent-coverage-v1";
 const MAX_CONTINUATION_REDUCE_INPUT_CHARS = 300_000;
 const TERMINAL_AUTHORITY_FRAME_VERSION = 2;
+const ACTION_READY_PROGRESS_STAGE = "progress_map";
+
+const ACTION_READY_OUTPUT_CONTRACT = Object.freeze({
+  formatVersion: 1,
+  kind: "codex-handoff-action-ready-output-contract",
+  requiredFields: [
+    "workingSynthesis",
+    "deliverableStatus",
+    "inspectedEvidenceMap",
+    "resumePolicy",
+  ],
+  workingSynthesisStatuses: ["draft_ready", "partial", "blocked"],
+  deliverableStatuses: ["ready", "partial", "blocked"],
+  rereadPolicies: ["do_not_reread", "verify_only", "targeted_followup"],
+  resumeModes: ["synthesize_first", "execute_next", "resolve_blocker"],
+  allowedReadReasons: ["claim_verification", "named_uncertainty"],
+});
 
 function durationSince(startedAtMs) {
   return Math.max(0, Date.now() - startedAtMs);
@@ -161,7 +192,7 @@ function mapOutputMetrics(manifest) {
   const rawMapOutputChars = accepted.length > 0 && raw.every(Number.isInteger)
     ? raw.reduce((total, value) => total + value, 0)
     : null;
-  if (manifest.mapResultMode === CONTINUATION_MAP_RESULT_MODE) {
+  if (isContinuationMapResultMode(manifest.mapResultMode)) {
     const completed = accepted.map((segment) => segment.completedMapOutputChars);
     return {
       rawMapOutputChars,
@@ -257,7 +288,7 @@ async function withTerminalFailureReport(workDir, phase, operation) {
 function validateAggregateMapOutputMetrics(manifest) {
   const metrics = mapOutputMetrics(manifest);
   if (!Object.hasOwn(manifest, "maxAggregateMapOutputChars")) return metrics;
-  const derivedMetric = manifest.mapResultMode === CONTINUATION_MAP_RESULT_MODE
+  const derivedMetric = isContinuationMapResultMode(manifest.mapResultMode)
     ? metrics.completedMapOutputChars
     : metrics.normalizedMapOutputChars;
   if (metrics.rawMapOutputChars === null || derivedMetric === null) {
@@ -435,6 +466,7 @@ async function assertWorkflowVersionBinding(manifest, workDir) {
         ![
           SPARSE_MAP_RESULT_MODE,
           CONTINUATION_MAP_RESULT_MODE,
+          CONTINUATION_MAP_V2_RESULT_MODE,
         ].includes(binding.mapResultMode) ||
         manifest.mapResultMode !== binding.mapResultMode
       )
@@ -448,6 +480,7 @@ async function assertWorkflowVersionBinding(manifest, workDir) {
         ![
           SPARSE_MAP_RESULT_MODE,
           CONTINUATION_MAP_RESULT_MODE,
+          CONTINUATION_MAP_V2_RESULT_MODE,
         ].includes(binding.mapResultMode)
       )
     )
@@ -465,14 +498,18 @@ async function assertWorkflowVersionBinding(manifest, workDir) {
 
 function assertMapOutputBudgetPlan(manifest) {
   if (!Object.hasOwn(manifest, "maxAggregateMapOutputChars")) return;
-  if (![SPARSE_MAP_RESULT_MODE, CONTINUATION_MAP_RESULT_MODE].includes(
+  if (![
+    SPARSE_MAP_RESULT_MODE,
+    CONTINUATION_MAP_RESULT_MODE,
+    CONTINUATION_MAP_V2_RESULT_MODE,
+  ].includes(
     manifest.mapResultMode,
   )) {
     workflowVersionMismatch("A MAP output budget requires a compact MAP result mode");
   }
   const budgets = (manifest.segments || []).map((segment) => segment.maxMapOutputChars);
   const allocated = budgets.reduce((total, value) => total + value, 0);
-  const validAllocation = manifest.mapResultMode === CONTINUATION_MAP_RESULT_MODE
+  const validAllocation = isContinuationMapResultMode(manifest.mapResultMode)
     ? (
       budgets.every((value) => value <= CONTINUATION_MAP_CANDIDATE_MAX_CHARS) &&
       allocated <= manifest.maxAggregateMapOutputChars
@@ -629,6 +666,15 @@ function measuredEvidence(value) {
   return { ...value, evidenceChars: JSON.stringify({ ...value, evidenceChars }).length };
 }
 
+function createActionReadyProgressSegment(sessionId, progressEvidence) {
+  return measuredEvidence({
+    segmentId: "progress-map-001",
+    stage: ACTION_READY_PROGRESS_STAGE,
+    sourceSessionId: sessionId,
+    progressEvidence: structuredClone(progressEvidence),
+  });
+}
+
 async function validateWorkerSummary(segment, frozenFrame, options = {}) {
   const summaryDocument = options.summaryDocument || await readJsonDocument(
     segment.summaryPath,
@@ -724,6 +770,31 @@ async function validateWorkerSummary(segment, frozenFrame, options = {}) {
       );
     }
     completed = completeContinuationMapResult(summary, dictionary, frozenFrame);
+  } else if (segment.dispatch?.mapResultMode === CONTINUATION_MAP_V2_RESULT_MODE) {
+    if (!dictionary) {
+      throw new ExportHandoffError(
+        "WORKFLOW_FILE_MISSING",
+        `${segment.segmentId} continuation-map-v2 requires an Evidence Reference Dictionary`,
+      );
+    }
+    completed = completeActionReadyContinuationMapResult(
+      summary,
+      dictionary,
+      frozenFrame,
+      chunk.stage === ACTION_READY_PROGRESS_STAGE ? chunk.progressEvidence : null,
+    );
+    const completedMapOutputChars = `${JSON.stringify(completed, null, 2)}\n`.length;
+    if (completedMapOutputChars > CONTINUATION_MAP_V2_COMPLETED_MAX_CHARS) {
+      throw new ExportHandoffError(
+        "MAP_OUTPUT_TOO_LARGE",
+        `${segment.segmentId} completed continuation-map-v2 output is ${completedMapOutputChars} characters; limit is ${CONTINUATION_MAP_V2_COMPLETED_MAX_CHARS}`,
+        {
+          segmentId: segment.segmentId,
+          completedMapOutputChars,
+          maxCompletedMapOutputChars: CONTINUATION_MAP_V2_COMPLETED_MAX_CHARS,
+        },
+      );
+    }
   } else {
     validateMapResult(summary, chunk, frozenFrame);
   }
@@ -827,7 +898,7 @@ async function readAcceptedMap(segment, frozenFrame, options = {}) {
     }
     return normalizedDocument.value;
   }
-  if (segment.dispatch.mapResultMode === CONTINUATION_MAP_RESULT_MODE) {
+  if (isContinuationMapResultMode(segment.dispatch.mapResultMode)) {
     if (summaryDocument.text.length !== receipt.rawMapOutputChars) {
       throw new ExportHandoffError(
         "MAP_OUTPUT_METRICS_MISMATCH",
@@ -1059,6 +1130,9 @@ async function collectContinuationReduceData(manifest, frozenFrame, evidenceInde
   const completedMaps = [];
   const segmentSummaries = [];
   const deterministicClaims = continuationAuthorityClaims(frozenFrame.frame);
+  const parentCoverage = manifest.mapResultMode === CONTINUATION_MAP_V2_RESULT_MODE
+    ? buildActionReadyContinuationParentCoverage
+    : buildContinuationParentCoverage;
   for (const stage of manifest.reduceStages || manifest.segments) {
     if (stage.stage === "turn_aggregate_map") {
       const aggregate = findTurnAggregate(manifest, stage.segmentId);
@@ -1073,7 +1147,7 @@ async function collectContinuationReduceData(manifest, frozenFrame, evidenceInde
       }
       segmentSummaries.push({
         segmentId: aggregate.segmentId,
-        turnCoverage: [buildContinuationParentCoverage(
+        turnCoverage: [parentCoverage(
           childMaps,
           aggregate.parentTurnId,
           evidenceIndex,
@@ -1088,7 +1162,7 @@ async function collectContinuationReduceData(manifest, frozenFrame, evidenceInde
     segmentSummaries.push({
       segmentId: segment.segmentId,
       turnCoverage: (segment.expectedTurnIds || []).map((turnId) => (
-        buildContinuationParentCoverage(
+        parentCoverage(
           [completed],
           turnId,
           evidenceIndex,
@@ -1298,13 +1372,19 @@ export async function prepareCompressionTask(options, dependencies = {}) {
     "maxEvidenceIndexChars",
   );
   const mapResultMode = options.mapResultMode ?? SPARSE_MAP_RESULT_MODE;
-  if (![SPARSE_MAP_RESULT_MODE, CONTINUATION_MAP_RESULT_MODE].includes(mapResultMode)) {
+  if (![
+    SPARSE_MAP_RESULT_MODE,
+    CONTINUATION_MAP_RESULT_MODE,
+    CONTINUATION_MAP_V2_RESULT_MODE,
+  ].includes(mapResultMode)) {
     throw new ExportHandoffError(
       "INVALID_MAP_RESULT_MODE",
-      `mapResultMode must be ${SPARSE_MAP_RESULT_MODE} or ${CONTINUATION_MAP_RESULT_MODE}`,
+      `mapResultMode must be ${SPARSE_MAP_RESULT_MODE}, ${CONTINUATION_MAP_RESULT_MODE}, or ${CONTINUATION_MAP_V2_RESULT_MODE}`,
     );
   }
-  const maximumAggregateMapOutputChars = mapResultMode === CONTINUATION_MAP_RESULT_MODE
+  const continuationMode = isContinuationMapResultMode(mapResultMode);
+  const actionReadyMode = mapResultMode === CONTINUATION_MAP_V2_RESULT_MODE;
+  const maximumAggregateMapOutputChars = continuationMode
     ? reduceTargetMaxChars(maxChars)
     : reduceTargetMaxChars(maxChars) * 3;
   const maxAggregateMapOutputChars = requireInteger(
@@ -1320,7 +1400,7 @@ export async function prepareCompressionTask(options, dependencies = {}) {
       `maxAggregateMapOutputChars cannot exceed the ${mapResultMode} ceiling (${maximumAggregateMapOutputChars})`,
     );
   }
-  const effectiveMaxChunkChars = mapResultMode === CONTINUATION_MAP_RESULT_MODE
+  const effectiveMaxChunkChars = continuationMode
     ? Math.min(
       maxChunkChars,
       Math.floor((maxMapInputChars - maxFrameProjectionChars) * 0.75),
@@ -1362,18 +1442,45 @@ export async function prepareCompressionTask(options, dependencies = {}) {
   }
   validateEvidenceIndex(evidenceIndex);
 
+  let actionReadyProgressEvidence = null;
+  if (actionReadyMode) {
+    actionReadyProgressEvidence = validateProgressEvidence(
+      evidencePack.progressEvidence,
+      evidencePack.turns,
+      evidenceIndex,
+    );
+  }
+
   const chunkPlan = chunkEvidencePack(evidencePack, {
     maxChunkChars: effectiveMaxChunkChars,
-    criticalOnly: mapResultMode === CONTINUATION_MAP_RESULT_MODE,
+    criticalOnly: continuationMode,
   });
-  const chunks = chunkPlan.segments;
-  const mapOutputBudgets = mapResultMode === CONTINUATION_MAP_RESULT_MODE
+  const progressSegment = actionReadyMode
+    ? createActionReadyProgressSegment(sessionId, actionReadyProgressEvidence)
+    : null;
+  if (progressSegment && progressSegment.evidenceChars > effectiveMaxChunkChars) {
+    throw new ExportHandoffError(
+      "MAP_INPUT_TOO_LARGE",
+      `Progress Evidence MAP input is ${progressSegment.evidenceChars} characters; evidence limit is ${effectiveMaxChunkChars}`,
+    );
+  }
+  const chunks = [
+    ...chunkPlan.segments,
+    ...(progressSegment ? [progressSegment] : []),
+  ];
+  const reduceStages = [
+    ...chunkPlan.reduceStages,
+    ...(progressSegment
+      ? [{ stage: ACTION_READY_PROGRESS_STAGE, segmentId: progressSegment.segmentId }]
+      : []),
+  ];
+  const mapOutputBudgets = continuationMode
     ? allocateContinuationMapOutputBudgets(maxAggregateMapOutputChars, chunks.length)
     : allocateMapOutputBudgets(maxAggregateMapOutputChars, chunks.length);
   const workRoot = path.resolve(options.workRoot || os.tmpdir());
   await fs.promises.mkdir(workRoot, { recursive: true });
   const workDir = await fs.promises.mkdtemp(path.join(workRoot, WORKDIR_PREFIX));
-  const frameContractVersion = mapResultMode === CONTINUATION_MAP_RESULT_MODE &&
+  const frameContractVersion = continuationMode &&
     evidencePack.sourceContinuation?.currentGoal &&
     evidencePack.terminalStateClaim
     ? TERMINAL_AUTHORITY_FRAME_VERSION
@@ -1486,7 +1593,7 @@ export async function prepareCompressionTask(options, dependencies = {}) {
       paths,
       segments,
       turnAggregates,
-      reduceStages: chunkPlan.reduceStages,
+      reduceStages,
     };
 
     await writeJson(paths.evidencePack, evidencePack, { exclusive: true });
@@ -2035,7 +2142,7 @@ export async function completeMapDispatch(workDir, segmentId, dispatchId) {
     if (Object.hasOwn(stage.dispatch, "maxMapOutputChars")) {
       receipt.normalizedMapOutputChars = normalizedDocument.text.length;
     }
-  } else if (stage.dispatch.mapResultMode === CONTINUATION_MAP_RESULT_MODE) {
+  } else if (isContinuationMapResultMode(stage.dispatch.mapResultMode)) {
     if (!stage.completedSummaryPath) {
       throw new ExportHandoffError(
         "WORKFLOW_FILE_MISSING",
@@ -2202,19 +2309,28 @@ async function prepareReduceStageInternal(workDir) {
     await readJson(manifest.paths.evidenceIndex, "Evidence Index"),
   );
   let reduceInput;
-  if (manifest.mapResultMode === CONTINUATION_MAP_RESULT_MODE) {
+  if (isContinuationMapResultMode(manifest.mapResultMode)) {
     const continuationData = await collectContinuationReduceData(
       manifest,
       frozenFrame,
       evidenceIndex,
     );
-    const continuationDownstream = buildContinuationDownstream(
-      continuationData.completedMaps,
-      manifest.expectedTurnIds,
-      evidenceIndex,
-      evidenceIndex.preservationLedger,
-      continuationAuthorityClaims(frozenFrame.frame),
-    );
+    const continuationDownstream = manifest.mapResultMode === CONTINUATION_MAP_V2_RESULT_MODE
+      ? buildActionReadyContinuationDownstream(
+        continuationData.completedMaps,
+        manifest.expectedTurnIds,
+        evidenceIndex,
+        evidenceIndex.preservationLedger,
+        evidencePack.progressEvidence,
+        continuationAuthorityClaims(frozenFrame.frame),
+      )
+      : buildContinuationDownstream(
+        continuationData.completedMaps,
+        manifest.expectedTurnIds,
+        evidenceIndex,
+        evidenceIndex.preservationLedger,
+        continuationAuthorityClaims(frozenFrame.frame),
+      );
     const deterministicProjections = buildContinuationReduceProjections(
       continuationDownstream.claimTable,
       evidenceIndex.preservationLedger,
@@ -2263,6 +2379,10 @@ async function prepareReduceStageInternal(workDir) {
           },
         } : {}),
       },
+      ...(manifest.mapResultMode === CONTINUATION_MAP_V2_RESULT_MODE ? {
+        workingSynthesisInput: continuationDownstream.workingSynthesisInput,
+        actionReadyOutputContract: structuredClone(ACTION_READY_OUTPUT_CONTRACT),
+      } : {}),
       targetMaxChars: reduceTargetMaxChars(manifest.maxChars),
     };
   } else {
@@ -2286,7 +2406,7 @@ async function prepareReduceStageInternal(workDir) {
   const outputMetrics = validateAggregateMapOutputMetrics(manifest);
   const reduceInputChars = `${JSON.stringify(reduceInput, null, 2)}\n`.length;
   if (
-    manifest.mapResultMode === CONTINUATION_MAP_RESULT_MODE &&
+    isContinuationMapResultMode(manifest.mapResultMode) &&
     reduceInputChars > MAX_CONTINUATION_REDUCE_INPUT_CHARS
   ) {
     throw new ExportHandoffError(
@@ -2329,7 +2449,7 @@ async function prepareReduceStageInternal(workDir) {
     ),
     maxAggregateMapOutputChars: manifest.maxAggregateMapOutputChars || null,
     reduceInputChars,
-    maxReduceInputChars: manifest.mapResultMode === CONTINUATION_MAP_RESULT_MODE
+    maxReduceInputChars: isContinuationMapResultMode(manifest.mapResultMode)
       ? MAX_CONTINUATION_REDUCE_INPUT_CHARS
       : null,
     reducePrepareDurationMs: manifest.reducePrepareDurationMs,
@@ -2350,19 +2470,28 @@ async function continuationReduceValidationContext(
   frozenFrame,
   evidenceIndex,
 ) {
-  if (manifest.mapResultMode !== CONTINUATION_MAP_RESULT_MODE) return {};
+  if (!isContinuationMapResultMode(manifest.mapResultMode)) return {};
   const continuationData = await collectContinuationReduceData(
     manifest,
     frozenFrame,
     evidenceIndex,
   );
-  const downstream = buildContinuationDownstream(
-    continuationData.completedMaps,
-    manifest.expectedTurnIds,
-    evidenceIndex,
-    evidenceIndex.preservationLedger,
-    continuationAuthorityClaims(frozenFrame.frame),
-  );
+  const downstream = manifest.mapResultMode === CONTINUATION_MAP_V2_RESULT_MODE
+    ? buildActionReadyContinuationDownstream(
+      continuationData.completedMaps,
+      manifest.expectedTurnIds,
+      evidenceIndex,
+      evidenceIndex.preservationLedger,
+      (await readJson(manifest.paths.evidencePack, "Evidence Pack")).progressEvidence,
+      continuationAuthorityClaims(frozenFrame.frame),
+    )
+    : buildContinuationDownstream(
+      continuationData.completedMaps,
+      manifest.expectedTurnIds,
+      evidenceIndex,
+      evidenceIndex.preservationLedger,
+      continuationAuthorityClaims(frozenFrame.frame),
+    );
   return {
     deterministicProjections: buildContinuationReduceProjections(
       downstream.claimTable,
@@ -2370,6 +2499,19 @@ async function continuationReduceValidationContext(
       continuationAuthorityClaims(frozenFrame.frame),
     ),
     requireDerivedProvenance: true,
+    ...(manifest.mapResultMode === CONTINUATION_MAP_V2_RESULT_MODE
+      ? {
+        workingSynthesisInput: downstream.workingSynthesisInput,
+        actionReadyGateContext: {
+          taskType: frozenFrame.frame.taskType,
+          currentGoal: structuredClone(frozenFrame.frame.currentGoal),
+          explicitExclusions: structuredClone(frozenFrame.frame.explicitExclusions),
+          claimTable: downstream.claimTable,
+          workingSynthesisInput: downstream.workingSynthesisInput,
+          evidenceIndex,
+        },
+      }
+      : {}),
   };
 }
 
@@ -2452,25 +2594,45 @@ async function publishHandoffInternal(workDir, options = {}, dependencies = {}) 
   );
   let semanticCoverage;
   let deterministicProjections = null;
-  if (manifest.mapResultMode === CONTINUATION_MAP_RESULT_MODE) {
+  let actionReadyGateContext = null;
+  if (isContinuationMapResultMode(manifest.mapResultMode)) {
     const continuationData = await collectContinuationReduceData(
       manifest,
       frozenFrame,
       evidenceIndex,
     );
-    const continuationDownstream = buildContinuationDownstream(
-      continuationData.completedMaps,
-      manifest.expectedTurnIds,
-      evidenceIndex,
-      evidenceIndex.preservationLedger,
-      continuationAuthorityClaims(frozenFrame.frame),
-    );
+    const continuationDownstream = manifest.mapResultMode === CONTINUATION_MAP_V2_RESULT_MODE
+      ? buildActionReadyContinuationDownstream(
+        continuationData.completedMaps,
+        manifest.expectedTurnIds,
+        evidenceIndex,
+        evidenceIndex.preservationLedger,
+        evidencePack.progressEvidence,
+        continuationAuthorityClaims(frozenFrame.frame),
+      )
+      : buildContinuationDownstream(
+        continuationData.completedMaps,
+        manifest.expectedTurnIds,
+        evidenceIndex,
+        evidenceIndex.preservationLedger,
+        continuationAuthorityClaims(frozenFrame.frame),
+      );
     semanticCoverage = continuationDownstream.semanticCoverage;
     deterministicProjections = buildContinuationReduceProjections(
       continuationDownstream.claimTable,
       evidenceIndex.preservationLedger,
       continuationAuthorityClaims(frozenFrame.frame),
     );
+    if (manifest.mapResultMode === CONTINUATION_MAP_V2_RESULT_MODE) {
+      actionReadyGateContext = {
+        taskType: frozenFrame.frame.taskType,
+        currentGoal: structuredClone(frozenFrame.frame.currentGoal),
+        explicitExclusions: structuredClone(frozenFrame.frame.explicitExclusions),
+        claimTable: continuationDownstream.claimTable,
+        workingSynthesisInput: continuationDownstream.workingSynthesisInput,
+        evidenceIndex,
+      };
+    }
   } else {
     const segmentSummaries = await collectReduceStageSummaries(manifest, frozenFrame);
     semanticCoverage = buildSemanticCoverageGraph(
@@ -2484,7 +2646,7 @@ async function publishHandoffInternal(workDir, options = {}, dependencies = {}) 
     "REDUCE result",
   );
   const reducedDigest = `sha256:${sha256Text(reducedDocument.text)}`;
-  if (manifest.mapResultMode === CONTINUATION_MAP_RESULT_MODE) {
+  if (isContinuationMapResultMode(manifest.mapResultMode)) {
     if (!manifest.checkedReducedDigest || !manifest.reduceCheckedAt) {
       throw new ExportHandoffError(
         "REDUCE_NOT_CHECKED",
@@ -2513,8 +2675,17 @@ async function publishHandoffInternal(workDir, options = {}, dependencies = {}) 
       ...(deterministicProjections
         ? { deterministicProjections, requireDerivedProvenance: true }
         : {}),
+      ...(actionReadyGateContext
+        ? {
+          workingSynthesisInput: actionReadyGateContext.workingSynthesisInput,
+          actionReadyGateContext,
+        }
+        : {}),
     },
   );
+  const actionReadyProjection = actionReadyGateContext
+    ? validateActionReadyHandoffGates(reduced, actionReadyGateContext)
+    : null;
   validateEvidenceReferences(reduced, evidenceIndex);
   const provenance = deriveFinalProvenance(
     reduced,
@@ -2523,7 +2694,7 @@ async function publishHandoffInternal(workDir, options = {}, dependencies = {}) 
     frozenFrame,
   );
   if (
-    manifest.mapResultMode === CONTINUATION_MAP_RESULT_MODE &&
+    isContinuationMapResultMode(manifest.mapResultMode) &&
     canonicalStringify(provenance) !== canonicalStringify(manifest.checkedFinalProvenance)
   ) {
     throw new ExportHandoffError(
@@ -2531,14 +2702,31 @@ async function publishHandoffInternal(workDir, options = {}, dependencies = {}) 
       "Derived provenance changed after REDUCE prepublication validation",
     );
   }
-  const publishedEvidenceIndex = attachSemanticCoverage(evidenceIndex, semanticCoverage);
-  const handoff = renderHandoff({
-    evidencePack,
-    reduced,
-    coverage: semanticCoverage.turns,
-    provenance,
-    generatedAt: new Date().toISOString(),
-  });
+  let publishedEvidenceIndex = attachSemanticCoverage(evidenceIndex, semanticCoverage);
+  if (actionReadyProjection) {
+    publishedEvidenceIndex = attachEvidenceKeyMap(
+      publishedEvidenceIndex,
+      actionReadyProjection.evidenceKeyMap,
+    );
+  }
+  const consumerContract = actionReadyProjection
+    ? buildActionReadyConsumerContract(actionReadyProjection.hotContext.resumePolicy)
+    : null;
+  const handoff = actionReadyProjection
+    ? renderActionReadyHandoff({
+      projection: actionReadyProjection,
+      evidencePack,
+      evidenceIndex: publishedEvidenceIndex,
+      evidenceIndexPath: manifest.evidenceIndexPath,
+      frameDigest: frozenFrame.frameDigest,
+    })
+    : renderHandoff({
+      evidencePack,
+      reduced,
+      coverage: semanticCoverage.turns,
+      provenance,
+      generatedAt: new Date().toISOString(),
+    });
   if (handoff.length > manifest.maxChars) {
     throw new ExportHandoffError(
       "OUTPUT_TOO_LARGE",
@@ -2634,7 +2822,7 @@ async function publishHandoffInternal(workDir, options = {}, dependencies = {}) 
     }))}`,
     handoffDigest: `sha256:${sha256Text(handoff)}`,
     evidenceIndexDigest: `sha256:${sha256Text(evidenceIndexText)}`,
-    reducePreflightDigest: manifest.mapResultMode === CONTINUATION_MAP_RESULT_MODE
+    reducePreflightDigest: isContinuationMapResultMode(manifest.mapResultMode)
       ? reducedDigest
       : null,
     coveredTurns: semanticCoverage.turns.length,
@@ -2664,7 +2852,15 @@ async function publishHandoffInternal(workDir, options = {}, dependencies = {}) 
     sourceCwd: manifest.sourceCwd,
     cleanupStatus,
     workDir: cleanupStatus === "removed" ? null : manifest.workDir,
-    suggestedContinuation: `Start a fresh Codex task in ${manifest.sourceCwd || "the intended workspace"}, read ${manifest.outputPath}, and continue from the Handoff without resuming the Source Thread. Use ${manifest.evidenceIndexPath} to retrieve cited evidence.`,
+    ...(consumerContract ? { consumerContract } : {}),
+    suggestedContinuation: consumerContract
+      ? buildActionReadySuggestedContinuation({
+        workspacePath: manifest.sourceCwd,
+        handoffPath: manifest.outputPath,
+        evidenceIndexPath: manifest.evidenceIndexPath,
+        consumerContract,
+      })
+      : `Start a fresh Codex task in ${manifest.sourceCwd || "the intended workspace"}, read ${manifest.outputPath}, and continue from the Handoff without resuming the Source Thread. Use ${manifest.evidenceIndexPath} to retrieve cited evidence.`,
   };
 }
 

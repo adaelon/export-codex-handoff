@@ -23,12 +23,12 @@ function readSkillFile(relativePath) {
   return fs.readFileSync(path.join(SKILL_DIR, relativePath), "utf8");
 }
 
-test("R7 Skill routes new runs through the continuation MAP and REDUCE preflight contracts", () => {
+test("R7 continuation-map-v1 remains a frozen compatibility route after v2 promotion", () => {
   const skill = readSkillFile("SKILL.md");
 
   assert.match(
     skill,
-    /prepare <UUID>[\s\S]*--map-result-mode continuation-map-v1/,
+    /`continuation-map-v1`[\s\S]{0,80}compatibility routes only/,
   );
   assert.match(skill, /references\/continuation-map-worker-contract\.md/);
   assert.match(skill, /dictionaryPath/);

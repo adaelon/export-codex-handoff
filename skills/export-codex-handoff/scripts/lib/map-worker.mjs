@@ -5,13 +5,27 @@ import { ExportHandoffError } from "./source-thread.mjs";
 export const MAP_RECEIPT_MAX_CHARS = 2_048;
 export const SPARSE_MAP_RESULT_MODE = "sparse-map-v1";
 export const CONTINUATION_MAP_RESULT_MODE = "continuation-map-v1";
+export const CONTINUATION_MAP_V2_RESULT_MODE = "continuation-map-v2";
 export const CONTINUATION_MAP_CANDIDATE_MAX_CHARS = 4_000;
+export const CONTINUATION_MAP_V2_COMPLETED_MAX_CHARS = 16_000;
 
 const SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/;
 const DISPATCH_ID_PATTERN = /^dispatch-[0-9a-f]{64}$/;
 
 function isCompactMapResultMode(mode) {
-  return mode === SPARSE_MAP_RESULT_MODE || mode === CONTINUATION_MAP_RESULT_MODE;
+  return mode === SPARSE_MAP_RESULT_MODE || isContinuationMapResultMode(mode);
+}
+
+export function isContinuationMapResultMode(mode) {
+  return mode === CONTINUATION_MAP_RESULT_MODE || mode === CONTINUATION_MAP_V2_RESULT_MODE;
+}
+
+function compactMapResultModes() {
+  return [
+    SPARSE_MAP_RESULT_MODE,
+    CONTINUATION_MAP_RESULT_MODE,
+    CONTINUATION_MAP_V2_RESULT_MODE,
+  ].join(", ");
 }
 
 function requireString(value, label, code = "INVALID_MAP_DISPATCH") {
@@ -66,7 +80,7 @@ export function createMapDispatch(input) {
     if (!isCompactMapResultMode(candidate.mapResultMode)) {
       throw new ExportHandoffError(
         "INVALID_MAP_DISPATCH",
-        `mapResultMode must be ${SPARSE_MAP_RESULT_MODE} or ${CONTINUATION_MAP_RESULT_MODE}`,
+        `mapResultMode must be one of ${compactMapResultModes()}`,
       );
     }
   }
@@ -83,22 +97,22 @@ export function createMapDispatch(input) {
       "INVALID_MAP_DISPATCH",
     );
     if (
-      candidate.mapResultMode === CONTINUATION_MAP_RESULT_MODE &&
+      isContinuationMapResultMode(candidate.mapResultMode) &&
       candidate.maxMapOutputChars > CONTINUATION_MAP_CANDIDATE_MAX_CHARS
     ) {
       throw new ExportHandoffError(
         "INVALID_MAP_DISPATCH",
-        `continuation-map-v1 candidates are capped at ${CONTINUATION_MAP_CANDIDATE_MAX_CHARS} characters`,
+        `${candidate.mapResultMode} candidates are capped at ${CONTINUATION_MAP_CANDIDATE_MAX_CHARS} characters`,
       );
     }
   }
   if (
-    candidate.mapResultMode === CONTINUATION_MAP_RESULT_MODE &&
+    isContinuationMapResultMode(candidate.mapResultMode) &&
     candidate.maxMapOutputChars === undefined
   ) {
     throw new ExportHandoffError(
       "INVALID_MAP_DISPATCH",
-      "continuation-map-v1 requires a maxMapOutputChars binding",
+      `${candidate.mapResultMode} requires a maxMapOutputChars binding`,
     );
   }
   if (
@@ -185,10 +199,10 @@ export function validateMapDispatch(dispatch, expected = {}) {
     Object.hasOwn(dispatch, "mapResultMode") &&
     !isCompactMapResultMode(dispatch.mapResultMode)
   ) {
-    throw new ExportHandoffError(
-      "INVALID_MAP_DISPATCH",
-      `mapResultMode must be ${SPARSE_MAP_RESULT_MODE} or ${CONTINUATION_MAP_RESULT_MODE}`,
-    );
+      throw new ExportHandoffError(
+        "INVALID_MAP_DISPATCH",
+        `mapResultMode must be one of ${compactMapResultModes()}`,
+      );
   }
   if (Object.hasOwn(dispatch, "maxMapOutputChars")) {
     requirePositiveInteger(
@@ -203,22 +217,22 @@ export function validateMapDispatch(dispatch, expected = {}) {
       );
     }
     if (
-      dispatch.mapResultMode === CONTINUATION_MAP_RESULT_MODE &&
+      isContinuationMapResultMode(dispatch.mapResultMode) &&
       dispatch.maxMapOutputChars > CONTINUATION_MAP_CANDIDATE_MAX_CHARS
     ) {
       throw new ExportHandoffError(
         "INVALID_MAP_DISPATCH",
-        `continuation-map-v1 candidates are capped at ${CONTINUATION_MAP_CANDIDATE_MAX_CHARS} characters`,
+        `${dispatch.mapResultMode} candidates are capped at ${CONTINUATION_MAP_CANDIDATE_MAX_CHARS} characters`,
       );
     }
   }
   if (
-    dispatch.mapResultMode === CONTINUATION_MAP_RESULT_MODE &&
+    isContinuationMapResultMode(dispatch.mapResultMode) &&
     !Object.hasOwn(dispatch, "maxMapOutputChars")
   ) {
     throw new ExportHandoffError(
       "INVALID_MAP_DISPATCH",
-      "continuation-map-v1 requires a maxMapOutputChars binding",
+      `${dispatch.mapResultMode} requires a maxMapOutputChars binding`,
     );
   }
   if (Object.hasOwn(expected, "mapResultMode")) {
@@ -363,7 +377,7 @@ export function validateMapReceipt(receipt, dispatch, options = {}) {
   }
   if (receipt.status === "validated") {
     const isSparse = dispatch.mapResultMode === SPARSE_MAP_RESULT_MODE;
-    const isContinuation = dispatch.mapResultMode === CONTINUATION_MAP_RESULT_MODE;
+    const isContinuation = isContinuationMapResultMode(dispatch.mapResultMode);
     const allowed = new Set([
       "dispatchId",
       "segmentId",
@@ -448,6 +462,15 @@ export function validateMapReceipt(receipt, dispatch, options = {}) {
         throw new ExportHandoffError(
           "MAP_OUTPUT_TOO_LARGE",
           `MAP output is ${receipt.rawMapOutputChars} characters; limit is ${dispatch.maxMapOutputChars}`,
+        );
+      }
+      if (
+        dispatch.mapResultMode === CONTINUATION_MAP_V2_RESULT_MODE &&
+        receipt.completedMapOutputChars > CONTINUATION_MAP_V2_COMPLETED_MAX_CHARS
+      ) {
+        throw new ExportHandoffError(
+          "MAP_OUTPUT_TOO_LARGE",
+          `Completed continuation-map-v2 output is ${receipt.completedMapOutputChars} characters; limit is ${CONTINUATION_MAP_V2_COMPLETED_MAX_CHARS}`,
         );
       }
     }

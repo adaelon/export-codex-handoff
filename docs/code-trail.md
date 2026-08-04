@@ -507,3 +507,75 @@
 
 **Entry point**: Start AH0 with the synthetic failure fixture; no runtime route changes until its expected Hot/Cold and actionability contracts are frozen.
 **Test**: Deterministic documentation checks cover sequential ADR numbering, local links, resolved terms, seven ordered slices, per-slice input/output/exclusion/done criteria, and absence of unresolved placeholders.
+
+## 2026-08-04 Slice AH0 failure fixture and value baseline
+
+**Touched**:
+- `skills/export-codex-handoff/tests/fixtures/action-ready-handoff-fixtures.mjs:actionReadyHandoffRolloutRecords / compareActionReadyHandoff` — builds the private-data-free static-review failure class and freezes Hot/Cold classification, actionability, audit expansion, inline evidence noise, and first-deliverable readiness.
+- `skills/export-codex-handoff/tests/action-ready-ah0.test.mjs:AH0 characterization tests` — proves the existing evidence-valid path has no usable draft, repeats the whole mixed goal as an exclusion, and is rejected by the expected v2 contract.
+- `docs/slice-plan-action-ready-high-value-handoff.md:Slice AH0` — records the measured 4,860-character baseline and deterministic rejection diagnostics.
+
+**Entry point**: `node --test --test-isolation=none skills/export-codex-handoff/tests/action-ready-ah0.test.mjs`.
+**Test**: AH0 passes 3/3; the complete repository suite passes 132/132 with no runtime edits.
+
+## 2026-08-04 Slice AH1 Progress Evidence and Inspection Ledger
+
+**Touched**:
+- `skills/export-codex-handoff/scripts/lib/progress-evidence.mjs:buildProgressEvidence / validateProgressEvidence` — selects bounded user-visible progress and content inspections, folds duplicate scopes, and binds independent budgets plus stable coverage digests.
+- `skills/export-codex-handoff/scripts/lib/progress-evidence.mjs:classifyToolOperation` — assigns every successful Tool Receipt exactly one deterministic content, existence, verification, mutation, or mechanical operation class.
+- `skills/export-codex-handoff/scripts/lib/evidence-pack.mjs:buildEvidencePack` — attaches Progress Evidence after the unchanged complete Evidence Index and Critical-only Preservation Ledger are built.
+- `skills/export-codex-handoff/tests/action-ready-ah1.test.mjs:AH1 acceptance tests` — locks Cold routing, duplicate folding, independent budgets, replay stability, and index/Critical digest invariance.
+- `skills/export-codex-handoff/tests/evidence-pack.test.mjs:Progress Evidence integration assertions` — proves the real Evidence Pack path classifies verification and mutation without creating inspection rows.
+
+**Entry point**: `buildEvidencePack(sessionId, options).progressEvidence` or `buildProgressEvidence(turns, evidenceIndex, budgets)`.
+**Test**: AH1 passes 3/3; AH0/AH1/Evidence Pack focused regression passes 9/9; the complete repository suite passes 135/135.
+
+## 2026-08-04 Slice AH2 Versioned Working Synthesis contract
+
+**Touched**:
+- `skills/export-codex-handoff/scripts/lib/map-worker.mjs:CONTINUATION_MAP_V2_RESULT_MODE / validateMapReceipt` — binds the separate v2 route, preserves the 4k raw ceiling, and caps deterministic completion at 16k.
+- `skills/export-codex-handoff/scripts/lib/validation.mjs:validateActionReadyContinuationMapResult / completeActionReadyContinuationMapResult` — validates and completes exact Finding, Deliverable, and Inspection relations without widening v1.
+- `skills/export-codex-handoff/scripts/lib/validation.mjs:buildActionReadyContinuationDownstream / validateActionReadyReduceResult` — constructs Working Synthesis input and validates Working Synthesis, status, inspection-map, and Resume Policy references.
+- `skills/export-codex-handoff/scripts/lib/task-workflow-core.mjs:prepareCompressionTask / validateWorkerSummary / prepareReduceStage` — adds one bounded Progress Evidence MAP segment, routes completed v2 tables into REDUCE, and leaves publication fail-closed.
+- `skills/export-codex-handoff/references/continuation-map-v2-worker-contract.md:ActionReadyContinuationMapResult` — publishes the isolated v2 Worker and completion contract.
+- `skills/export-codex-handoff/tests/action-ready-ah2.test.mjs:AH2 acceptance tests` — locks relation failures, raw/completed budgets, REDUCE input shape, and v1 byte-contract routing.
+
+**Entry point**: Prepare with `--map-result-mode continuation-map-v2`, complete every returned dispatch, then run `prepare-reduce <workDir>` and consume `workingSynthesisInput` plus `actionReadyOutputContract`.
+**Test**: AH2 passes 3/3; the directly affected compatibility set passes 41/41; the complete repository suite passes 138/138.
+
+## 2026-08-04 Slice AH3 Information Value and Actionability gates
+
+**Touched**:
+- `skills/export-codex-handoff/scripts/lib/validation.mjs:validateActionReadyHandoffGates / buildActionReadyHotContextProjection` — enforces task-profile continuation readiness, typed-root Claim reachability, Cold routing, and deterministic compact Evidence Keys.
+- `skills/export-codex-handoff/scripts/lib/validation.mjs:validateReduceResult` — executes the AH3 gates on the `continuation-map-v2` preflight path without changing v1 validation.
+- `skills/export-codex-handoff/scripts/lib/task-workflow-core.mjs:continuationReduceValidationContext` — supplies the frozen task type, current goal, global Claim table, Working Synthesis input, and Evidence Index to AH3.
+- `skills/export-codex-handoff/tests/action-ready-ah3.test.mjs:AH3 acceptance tests` — locks stable Hot Context, existence-probe rejection, orphan/mechanical Cold routing, useful partial synthesis, and AH0 preflight rejection.
+- `skills/export-codex-handoff/references/contracts.md` and `skills/export-codex-handoff/SKILL.md` — publish the gate diagnostics, projection/key-map shape, and gated REDUCE workflow.
+- `docs/slice-plan-action-ready-high-value-handoff.md` and `docs/architecture.md` — record AH3 acceptance evidence and the prepublication Hot/Cold data flow.
+
+**Entry point**: Run `validate-reduce <workDir> --check` for a `continuation-map-v2` work directory; only gate-valid output reaches digest binding, while publication remains closed for AH5.
+**Test**: AH3 passes 4/4; the directly affected compatibility set passes 44/44; the complete repository suite passes 142/142.
+
+## 2026-08-04 Slice AH4 clause-level explicit exclusions
+
+**Touched**:
+- `skills/export-codex-handoff/scripts/lib/compression-frame.mjs:exclusionSpans / exclusionClaims` — derives source-ordered exact negative-clause spans while preserving comma lists, path punctuation, standalone text, full-goal bytes, and goal anchors.
+- `skills/export-codex-handoff/tests/action-ready-ah4.test.mjs:AH4 acceptance tests` — locks mixed Chinese, English negation, multiple exclusions, comma payloads, dotted paths, replay stability, and positive-only behavior.
+- `skills/export-codex-handoff/tests/action-ready-ah0.test.mjs` and `tests/fixtures/action-ready-handoff-fixtures.mjs` — retain the historical AH0 metrics and freeze the AH4 interim fixture after only the exclusion defect is removed.
+- `skills/export-codex-handoff/SKILL.md`, `references/contracts.md`, `docs/slice-plan-action-ready-high-value-handoff.md`, and `docs/architecture.md` — publish the byte-exact goal and clause-extraction boundary without enabling the AH5 renderer.
+
+**Entry point**: `buildFrameInput(evidencePack, evidenceIndex).explicitExclusions` supplies exact anchored clauses beside the unchanged `latestUserGoal`.
+**Test**: AH4 passes 4/4; AH0–AH4 pass 17/17; the Frame/TS/continuation compatibility set passes 69/69; the complete repository suite passes 146/146.
+
+## 2026-08-04 Slice AH5 high-value renderer and synthesize-first consumption
+
+**Touched**:
+- `skills/export-codex-handoff/scripts/lib/render-action-ready-handoff.mjs:renderActionReadyHandoff / buildActionReadyConsumerContract` — renders only Hot Context in execution-first order and freezes zero pre-draft evidence reads plus bounded targeted reads.
+- `skills/export-codex-handoff/scripts/lib/validation.mjs:buildActionReadyHotContextProjection` — gives clause-level explicit exclusions their own stable Handoff Evidence Keys.
+- `skills/export-codex-handoff/scripts/lib/evidence-index.mjs:attachEvidenceKeyMap / validateEvidenceKeyMapShape` — integrity-covers exact `E<n>` to Claim/Anchor resolution in the published Evidence Index.
+- `skills/export-codex-handoff/scripts/lib/task-workflow-core.mjs:publishHandoff` — replaces the v2 renderer fuse with digest-bound action-ready validation, independent rendering, transactional key-map publication, and a structured consumer contract without changing legacy routes.
+- `skills/export-codex-handoff/tests/action-ready-ah5.test.mjs:AH5 acceptance tests` — locks renderer order, multiline synthesis, Cold omission, key resolution, preflight mutation rejection, and synthesize-first continuation instructions.
+- `skills/export-codex-handoff/SKILL.md`, `references/contracts.md`, `docs/slice-plan-action-ready-high-value-handoff.md`, and `docs/architecture.md` — publish the AH5 renderer, index, consumer, and compatibility boundaries while deferring installation/live acceptance to AH6.
+
+**Entry point**: After `validate-reduce <workDir> --check`, `publish <workDir>` routes only `continuation-map-v2` through the Handoff v2 renderer and returns `consumerContract`.
+**Test**: AH5 passes 2/2; AH0–AH5 pass 19/19; the complete repository suite passes 148/148 with legacy v1, missing-mode v2, `sparse-map-v1`, and `continuation-map-v1` unchanged.

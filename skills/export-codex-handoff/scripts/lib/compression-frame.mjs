@@ -19,7 +19,9 @@ const TASK_PHASES = new Set([
   "blocked",
   "handoff",
 ]);
-const EXCLUSION_PATTERN = /\b(?:do not|don't|must not|never|exclude|excluded|non-goal|out of scope|without)\b|(?:不要|不得|禁止|不做|排除|范围外|无需|无须|不能|不可)/iu;
+const EXCLUSION_MARKER_PATTERN = /\b(?:do not|don't|must not|never|exclude|excluded|non-goal|out of scope|without)\b|(?:不要|不得|禁止|不做|排除|范围外|无需|无须|不能|不可)/giu;
+const EXCLUSION_CONNECTOR_PATTERN = /(?:\b(?:and|or|but|nor|also)\b|(?:并且|而且|以及|同时|并|且|也|但|而))\s*$/iu;
+const POSITIVE_TAIL_PATTERN = /[,，]\s*(?:(?:and|but)\s+)?(?:then|next|finally)\b|[,，]\s*(?:然后|随后|接着|最后|再)(?=\s|$)/giu;
 
 function fail(code, message, details = undefined) {
   throw new ExportHandoffError(code, message, details);
@@ -114,12 +116,56 @@ function messageClaims(evidencePack) {
   return claims;
 }
 
+function hardExclusionEnd(text, start) {
+  for (let index = start; index < text.length; index += 1) {
+    const character = text[index];
+    if (character === "\r" || character === "\n" || character === ";" || character === "；") {
+      return index;
+    }
+    if (
+      ".!?。！？".includes(character) &&
+      (index + 1 === text.length || /\s/u.test(text[index + 1]))
+    ) {
+      return index + 1;
+    }
+  }
+  return text.length;
+}
+
+function splitBeforeMarker(text, current, next, hardEnd) {
+  if (!next || next.index >= hardEnd) return hardEnd;
+  const between = text.slice(current.index + current[0].length, next.index);
+  const lastComma = Math.max(between.lastIndexOf(","), between.lastIndexOf("，"));
+  if (lastComma >= 0) return current.index + current[0].length + lastComma;
+  const connector = EXCLUSION_CONNECTOR_PATTERN.exec(between);
+  if (connector) return current.index + current[0].length + connector.index;
+  return hardEnd;
+}
+
+function trimPositiveTail(text, start, end) {
+  const span = text.slice(start, end);
+  const transition = [...span.matchAll(POSITIVE_TAIL_PATTERN)].at(0);
+  return transition ? start + transition.index : end;
+}
+
+function exclusionSpans(text) {
+  const markers = [...text.matchAll(EXCLUSION_MARKER_PATTERN)];
+  const spans = [];
+  let coveredUntil = -1;
+  for (const [index, marker] of markers.entries()) {
+    if (marker.index < coveredUntil) continue;
+    const hardEnd = hardExclusionEnd(text, marker.index + marker[0].length);
+    const markerEnd = splitBeforeMarker(text, marker, markers[index + 1], hardEnd);
+    const end = trimPositiveTail(text, marker.index, markerEnd);
+    const span = text.slice(marker.index, end).trimEnd();
+    if (span) spans.push(span);
+    coveredUntil = markerEnd;
+  }
+  return stableUnique(spans);
+}
+
 function exclusionClaims(goal) {
-  const sentences = goal.text
-    .split(/\r?\n|(?<=[.!?。！？；;])\s+/u)
-    .map((item) => item.trim())
-    .filter((item) => item && EXCLUSION_PATTERN.test(item));
-  return stableUnique(sentences).map((text, index) => claim(
+  return exclusionSpans(goal.text).map((text, index) => claim(
     "explicit_exclusion",
     text,
     goal.anchors,

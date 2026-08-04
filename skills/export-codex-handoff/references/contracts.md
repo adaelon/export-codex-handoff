@@ -24,6 +24,12 @@ exact serialized candidate digest in managed state. Continuation publication fai
 `REDUCE_NOT_CHECKED` when this step was skipped and `REDUCE_RESULT_CHANGED` when any candidate byte
 changed afterward. Sparse, missing-mode v2, and legacy v1 publication retain their prior routing.
 
+An opt-in `continuation-map-v2` run uses the same digest-bound preflight and transactional pair
+publication, but routes only its validated Hot Context through the isolated Handoff v2 renderer.
+Publication integrity-covers the exact Handoff Evidence Key map in the Evidence Index and returns a
+structured consumer contract. It never invokes the legacy renderer; all other result modes retain
+their existing Markdown and publication contracts.
+
 Successful v2 publication returns full-output digests and a deterministic `structuralDigest` over
 the validated frame, REDUCE result, coverage graph, source revision, and Evidence Index integrity.
 It also returns `initialMaps`, `maxObservedMapInputChars`, `maxAggregateMapOutputChars`,
@@ -193,7 +199,288 @@ node <skill-dir>/scripts/export-handoff.mjs verify-evidence <EVIDENCE_INDEX>
 Both commands verify index integrity. Retrieval also verifies the complete source revision and
 the selected anchor digest before returning content.
 
+## Progress Evidence and inspection classification
+
+`buildEvidencePack` creates Progress Evidence only after the complete Evidence Index and the
+Critical-only Preservation Ledger are fixed. The projection is read-only with respect to both:
+
+```text
+EvidenceReference {
+  referenceId: string
+  text: string
+  anchors: string[]
+  sourceChars: non-negative integer
+  truncated: boolean
+}
+
+InspectionReceipt {
+  operationClass: content_inspection
+  location: string | null
+  symbols: string[]
+  scope: string | null
+  outputEvidence: EvidenceReference
+}
+
+ProgressEvidenceV1 {
+  formatVersion: 1
+  kind: codex-handoff-progress-evidence
+  sourceRevision: sha256
+  evidenceIndexDigest: sha256
+  budgets: { maxInputChars, maxDispatchChars, digest }
+  assistantProgress: EvidenceReference[]
+  inspections: InspectionReceipt[]
+  coverage: { assistantProgress, inspections, receiptClassifications }
+  inputMetrics: {
+    candidateInputChars, selectedInputChars, dispatchChars,
+    assistantProgressCandidates, selectedAssistantProgress,
+    successfulToolReceipts, classifiedReceiptCount,
+    contentInspectionCandidates, selectedInspections,
+    duplicateScopesFolded, coldReceipts, operationClassCounts
+  }
+}
+```
+
+The default input and dispatch budgets are 32,000 and 24,000 serialized characters. Their digest is
+part of the projection, and validation deterministically rebuilds the complete value from Source
+Thread turns plus the existing Evidence Index. Candidates are admitted newest-first as indivisible
+references, then rendered in source order; selected input and serialized dispatch must each remain
+within their own budget.
+
+Every successful non-input Tool Receipt is classified exactly once as `content_inspection`,
+`existence_probe`, `verification`, `mutation`, or `mechanical_success`. Only
+`content_inspection` may enter `inspections`. Exact duplicate `{ location, symbols, scope }` rows fold
+to the latest output reference; earlier reads and all other operation classes remain Cold Evidence.
+Classification coverage is retained as a stable count and digest, not as another raw receipt list.
+This v1 projection does not alter existing MAP candidates, REDUCE input, Handoff rendering, the
+Evidence Index, or `PreservationLedger.requiredAnchors`.
+
+## Action-ready continuation MAP and Working Synthesis
+
+An explicitly prepared `continuation-map-v2` run retains the v1 Claim, typed-relation, Critical
+Anchor, dictionary, and Frame Projection contracts without widening `continuation-map-v1`. It adds
+one private `progress_map` dispatch containing the already validated Progress Evidence projection.
+Every other dispatch sees only its existing Critical evidence and must keep the new action-ready
+arrays empty.
+
+```text
+ActionReadyContinuationMapResult {
+  formatVersion: 2
+  kind: codex-handoff-continuation-map
+  frameId: string
+  frameDigest: sha256
+  segmentId: string
+  claims: ContinuationClaim[]
+  relations: ContinuationRelations
+  criticalExclusions: CriticalExclusion[]
+  findings: Array<{ localId: positive integer, claim: positive integer }>
+  deliverables: Array<{
+    deliverableId: string
+    request: string
+    status: ready | partial | blocked
+    findingIds: positive integer[]
+    missingReason?: string
+  }>
+  inspectionDispositions: Array<{
+    inspectionId: string
+    findingIds: positive integer[]
+    rereadPolicy: do_not_reread | verify_only | targeted_followup
+  }>
+}
+```
+
+Each Finding points to one evidence-backed local Claim and must be reachable from a requested
+deliverable. Every selected content inspection is disposed exactly once. `do_not_reread` and
+`verify_only` require a Finding whose Claim cites that inspection's output; `targeted_followup`
+explicitly leaves the scope available for a bounded later read. Unknown Finding, deliverable, Claim,
+or inspection references fail with `INVALID_ACTION_READY_RELATION`; an omitted inspection fails
+with `INCOMPLETE_INSPECTION_DISPOSITION`.
+
+The raw v2 candidate retains the 4,000-character per-dispatch ceiling. Deterministic completion is
+separately capped at 16,000 characters, preserves the v1 global Claim derivation, creates stable
+`finding-<sha256>` IDs from completed Claim IDs, resolves immutable inspection coordinates, and
+returns only digest/character metrics in the bounded MapReceipt. The v1 candidate and completed
+table remain byte-contract routed through their original validators.
+
+Accepted v2 completed results produce this REDUCE input extension:
+
+```text
+WorkingSynthesisInput {
+  formatVersion: 1
+  kind: codex-handoff-working-synthesis-input
+  findings: Array<{ findingId: string, claimId: string }>
+  deliverables: DeliverableStatus[]
+  inspections: InspectedEvidenceEntry[]
+}
+
+WorkingSynthesis {
+  status: draft_ready | partial | blocked
+  sections: Array<{ title: string, body: string, findingIds: string[] }>
+  confirmedFindingIds: string[]
+  uncertainties: Array<{
+    question: string
+    allowedScopes: string[]
+    findingIds: string[]
+  }>
+}
+
+DeliverableStatus {
+  deliverableId: string
+  request: string
+  status: ready | partial | blocked
+  findingIds: string[]
+  missingReason?: string
+}
+
+InspectedEvidenceEntry {
+  location: string | null
+  symbols: string[]
+  scope: string | null
+  findingIds: string[]
+  rereadPolicy: do_not_reread | verify_only | targeted_followup
+}
+
+ResumePolicy {
+  mode: synthesize_first | execute_next | resolve_blocker
+  firstDeliverableIds: string[]
+  maxTargetedReads: non-negative integer
+  allowedReadReasons: Array<claim_verification | named_uncertainty>
+  forbidBroadSearch: boolean
+  forbidFullFileReread: boolean
+}
+```
+
+`deliverableStatus` and `inspectedEvidenceMap` in REDUCE output must copy the deterministic Working
+Synthesis input relations exactly. Working Synthesis and Resume Policy may add semantic organization
+only through valid Finding and deliverable IDs. `validate-reduce --check` binds these structures with
+the existing Claim/provenance projections. Publication requires that exact checked byte sequence;
+missing preflight state fails with `REDUCE_NOT_CHECKED`, and any later edit fails with
+`REDUCE_RESULT_CHANGED` before either public artifact appears.
+
+## Information Value and Actionability gates
+
+For `review`, `research`, and `diagnosis`, `validate-reduce --check` requires a non-empty
+`draft_ready` or `partial` Working Synthesis, exact status for every requested deliverable, at least
+one `ready` or `partial` deliverable, and a `synthesize_first` Resume Policy. Both broad search and
+full-file rereads must be forbidden, the first deliverables must be usable, and
+`maxTargetedReads` must not exceed three. A partial synthesis also names at least one uncertainty.
+Missing or unusable continuation structure fails with `HANDOFF_NOT_ACTIONABLE`.
+
+After the strict Finding, deliverable, inspection, and Resume Policy relations validate, the
+Information Value gate builds this deterministic projection:
+
+```text
+ActionReadyProjection {
+  formatVersion: 1
+  kind: codex-handoff-action-ready-projection
+  hotContext: {
+    objective: { text, evidenceKey }
+    explicitExclusions: Array<{ text, evidenceKey }>
+    workingSynthesis: {
+      status
+      sections: Array<{ title, body, evidenceKeys }>
+      confirmedFindings: Array<{ text, evidenceKey }>
+      uncertainties: Array<{ question, allowedScopes, evidenceKeys }>
+    }
+    deliverableStatus: Array<{ deliverableId, request, status, evidenceKeys, missingReason? }>
+    constraints: Array<{ text, evidenceKey }>
+    decisions: Array<{ statement, rationale }>
+    inspectedEvidenceMap: Array<{ location, symbols, scope, evidenceKeys, rereadPolicy }>
+    nextActions: Array<{ text, evidenceKey }>
+    relevantVerifications: Array<{ command, result, evidenceKey }>
+    resumePolicy: ResumePolicy
+  }
+  evidenceKeyMap: {
+    formatVersion: 1
+    kind: codex-handoff-evidence-key-map
+    entries: Array<{ key: E<positive integer>, claimId, anchors }>
+  }
+}
+```
+
+The frozen objective is a root. Requested deliverables reach Findings and their completed Claims;
+exact Claim-table constraints, next actions, and active decisions are additional typed roots.
+Evidence Keys are assigned in bytewise Claim-ID order, so repeated validation of the same input is
+identical. Hot Context contains the keys but no raw Claim IDs or Evidence Anchors; the separate map
+retains exact audit resolution for the later renderer and Evidence Index attachment.
+
+Existence or mechanical commands cannot become relevant verification Findings. Claims outside the
+typed root graph, complete Semantic Coverage, raw audit ledgers, and unreferenced mechanical success
+remain Cold Evidence. Unknown evidence, a promoted low-value verification, a non-exact direct Claim,
+or raw audit identifiers in Hot Context fail with `HANDOFF_LOW_VALUE`. The gate reads but never
+mutates or prunes the complete Evidence Index.
+
+## Handoff v2 rendering and consumption
+
+Only `continuation-map-v2` may use the action-ready renderer. Every displayed evidence-backed fact
+uses a compact key from this exact map, which is attached to and integrity-covered by the published
+Evidence Index:
+
+```text
+HandoffEvidenceKeyMap {
+  formatVersion: 1
+  kind: codex-handoff-evidence-key-map
+  entries: Array<{
+    key: E<positive integer>
+    claimId: string
+    anchors: string[]
+  }>
+}
+```
+
+Entries are consecutive `E1..En` in bytewise Claim-ID order. Claim IDs are unique; every entry has
+one or more unique Evidence Anchors present in the same index. The Handoff contains only the keys,
+while the Evidence Index retains the exact Claim ID and Anchor resolution. Any missing, reordered,
+duplicated, unknown, or renderer/index-mismatched key fails with `HANDOFF_LOW_VALUE` or
+`INVALID_EVIDENCE_INDEX` before publication.
+
+The Markdown body has this fixed execution-first order:
+
+```text
+Objective and first deliverable
+-> multiline Working Synthesis
+-> Deliverable status
+-> Confirmed findings and uncertainties
+-> Inspected Evidence Map
+-> Resume Policy
+-> Next actions and constraints
+-> compact audit footer
+```
+
+It omits raw Terminal-State JSON, complete Source metadata, raw Anchor/Claim lists, full Semantic
+Coverage, existence probes, mechanical success, and unrelated verification. The audit footer keeps
+only original workspace, `handoff-v2`, source revision, Evidence Index path, coverage counts, frame
+digest, and final Evidence Index digest.
+
+For `synthesize_first`, publication returns this consumer contract and renders the same limits under
+Resume Policy:
+
+```text
+SynthesizeFirstConsumerContract {
+  formatVersion: 1
+  kind: codex-handoff-synthesize-first-consumer-contract
+  mode: synthesize_first
+  firstDeliverableIds: string[]
+  preDraftEvidenceReads: 0
+  maxTargetedReads: 0..3
+  allowedReadReasons: Array<claim_verification | named_uncertainty>
+  forbidBroadSearch: true
+  forbidFullFileReread: true
+}
+```
+
+The suggested continuation requires the first deliverable draft before any Evidence Index read.
+Only afterward may the consumer resolve named keys for the bounded reasons and read count.
+
 ## Compression Frame lifecycle
+
+`latestUserGoal.text` remains the complete byte-exact current goal. `explicitExclusions` are
+source-ordered extractive Claims over that goal: each Claim starts at a supported exclusion marker
+and ends at a deterministic clause boundary without summarizing adjacent positive text. Newlines,
+sentence terminators, and semicolons close a clause; separate exclusion markers create separate
+Claims, while comma payload lists and punctuation inside paths stay inside the applicable span.
+Standalone exclusion sentences retain their existing exact text and every extracted Claim reuses
+the complete goal's Evidence Anchors. Repeated preparation of the same goal must produce identical
+Claim text, ordering, IDs, and anchors.
 
 Before MAP, prepare deterministic frame candidates and validate one semantic frame:
 
@@ -297,7 +584,7 @@ MapDispatch {
   dictionaryDigest?: string
   frameDigest: string
   attempt: 1 | 2
-  mapResultMode?: sparse-map-v1 | continuation-map-v1
+  mapResultMode?: sparse-map-v1 | continuation-map-v1 | continuation-map-v2
   maxMapOutputChars?: positive integer
 }
 

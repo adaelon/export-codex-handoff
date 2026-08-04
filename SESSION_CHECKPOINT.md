@@ -1,52 +1,45 @@
-# SESSION_CHECKPOINT — 2026-07-30 13:44 +08:00
+# SESSION_CHECKPOINT — 2026-08-04 19:10 +08:00
 
 ## 新鲜度自检
 
-- 写入时最新 commit: unavailable — 当前目录不是 Git repository。
-- 读入时先运行 `git log --oneline -3`；若仓库后来初始化，以 Git 状态为准。
+- 写入时最新 commit: `46f0bac feat: add export-codex-handoff skill`。
+- AH0–AH5 仍是未提交工作树；读入时比较 `git log --oneline -3` 与 `git status --short --branch`，不一致时以 Git、当前文件内容和测试结果为准。
 
 ## 当前在做什么
 
-Continuation-grade compression 的 R7 runtime packaging、回归、文档与 installed mirror 已完成；最终 fresh live acceptance 因必须使用一个新的专用 Codex Task 而待执行。
+Action-Ready High-Value Handoff 的 Slice AH0–AH5 已实现并验证：`continuation-map-v2` 现在可经独立 Handoff v2 renderer 做 digest-bound 发布，Evidence Key map 被 Evidence Index 完整性覆盖，消费端必须 synthesize first；下一切片为 AH6 compatibility, packaging, and live continuation acceptance。
 
 ## 下一步（可直接接手）
 
-1. 获得用户对新建专用 Task 的明确授权；在 `E:\allwork\download\agent\understand-book-child-qa-pilot` 为 Source Thread `019fadc7-964d-73d2-b7ab-93456835f402` 创建 fresh Compression Task，并使用未占用的唯一 Handoff/Evidence 输出路径。
-2. 在新 Task 中调用 installed `export-codex-handoff`，只执行一个新的 `continuation-map-v1` Compression Run；不得继续或迁移 `codex-handoff-task-bLt9xi`。
-3. 要求每个 Critical Anchor 均 retained/excluded、无 contract-shape retry、双文件发布、`verify-evidence` 通过、Handoff <= 40000 字符且 `phaseTimingsMs.total <= 600000`。
-4. 将真实 live 指标写入 `docs/slice-plan-continuation-grade-compression.md`，并在 `docs/code-trail.md` 追加 R7 代码链路。
-5. 重新运行 119-test suite、两份 Skill validator 与 46/46 SHA-256 镜像核对，随后整页刷新本 checkpoint 并完成 goal。
+1. 运行 `git diff --check` 与 `git status --short --branch`，审阅 AH0–AH5 全部未提交文件；不要覆盖用户已有改动，也不要在未获授权时提交。
+2. 读取 `docs/slice-plan-action-ready-high-value-handoff.md` 的 AH6、`skills/export-codex-handoff/tests/action-ready-ah5.test.mjs` 与 `scripts/lib/task-workflow-core.mjs:publishHandoff`，先新增 AH6 packaging/live acceptance 检查。
+3. 运行仓库/安装包文件集与 SHA-256 对比；仅在 AH6 明确授权后同步 `C:\Users\Lenovo\.codex\skills\export-codex-handoff`，不得提前覆盖安装目录。
+4. 用一个 fresh Compression Task 生成 Handoff v2/Evidence Index pair，再用独立 fresh continuation task 验证首个 tool call 前已有 substantive draft、零 broad/full reread、定向读取不超过三次。
+5. 将 AH6 实测字符数、时延、Evidence verification 与 continuation 结果写回 Slice Plan、contracts、architecture、code trail，并整页刷新本 checkpoint。
 
 ## 未提交 / 未完成
 
-- Git: 当前目录未初始化，R7 文件无法提交。
-- Runtime: `chunking.mjs` 已加入 Critical-Anchor-only source/workspace MAP plan；`task-workflow-core.mjs` 已将 continuation 有效 evidence cap 从默认请求 140k 派生为 60k。
-- Tests: `continuation-grade-r7.test.mjs` 已覆盖非关键历史排除、Critical Anchor dictionary 可见性、完整 turn/Evidence inventory 与 60k gate 文档。
-- Docs: repository Skill、contracts、CLI help、architecture 与 continuation slice plan 已更新；`docs/code-trail.md` 等最终 live 成功后再追加 R7。
-- Installed Skill: repository/installed 46/46 相对文件及 SHA-256 完全一致。
-- Live: 第一次 fresh run 在 dispatch 前以 `MAP_INPUT_TOO_LARGE` 失败；修复后的新 fresh run 尚未开始，因此 R7 尚未满足完成判据。
-
-## 验证状态
-
-- R0–R7 focused: 34/34。
-- Complete repository suite: 119/119。
-- Repository/installed Skill validator: 均通过。
-- Installed R7 focused: 5/5。
-- Repository/installed mirror: 46/46 文件，0 hash difference。
-- Frozen failed run: `C:\Users\Lenovo\AppData\Local\Temp\codex-handoff-task-bLt9xi`，8 configured segments、0 dispatch、0 MAP attempt、0 public artifact；不得迁移或续用。
-- Failure metric: 160234 evidence + 11946 dictionary + 1194 projection = 173374 MAP input > 100000。
+- `scripts/lib/progress-evidence.mjs`、`evidence-pack.mjs`、`map-worker.mjs`、`task-workflow-core.mjs`、`validation.mjs`、`scripts/export-handoff.mjs`: AH1–AH3 runtime 与 v2 路由，待提交。
+- `scripts/lib/compression-frame.mjs`: AH4 exact exclusion spans，完整 goal 与 anchors 保持不变，待提交。
+- `scripts/lib/render-action-ready-handoff.mjs`、`evidence-index.mjs`、`task-workflow-core.mjs`: AH5 独立 renderer、Evidence Key map、digest-bound v2 publisher 与 consumer contract，待提交。
+- `tests/fixtures/action-ready-handoff-fixtures.mjs`、`action-ready-ah0.test.mjs` 至 `action-ready-ah5.test.mjs`、`evidence-pack.test.mjs`: AH0–AH5 acceptance coverage，待提交。
+- `references/continuation-map-v2-worker-contract.md`、`references/contracts.md`、`SKILL.md`: v2 Worker、REDUCE、gate、renderer、consumer 与兼容契约，待提交。
+- `docs/slice-plan-action-ready-high-value-handoff.md`、`docs/code-trail.md`、`docs/architecture.md`: AH0–AH5 状态、代码链路与架构已刷新，待提交。
+- `SESSION_CHECKPOINT.md`: 本热启动盘已整页刷新，待提交。
+- 验证基线：AH5 2/2、AH0–AH5 19/19、完整仓库 148/148；Skill `quick_validate.py`、57/57 JS syntax、29 个 Markdown 的 85 个本地链接与 `git diff --check` 均通过。
+- AH6 尚未开始；安装目录同步、fresh Compression Run 与独立 live continuation acceptance 仍待完成；未获用户授权，不提交或覆盖安装目录。
 
 ## 冷启动阅读顺序
 
-1. `CONTEXT.md` — Critical Anchor、Continuation Coverage 与 Continuation MAP Result 术语。
-2. `docs/adr/0011-continuation-grade-evidence-compression.md` — complete retrieval / critical coverage 分离决策。
-3. `docs/slice-plan-continuation-grade-compression.md` 的 R7 — 失败 live 证据、packaging 修复与剩余 acceptance gate。
-4. `skills/export-codex-handoff/tests/continuation-grade-r7.test.mjs`、`scripts/lib/chunking.mjs` 与 `scripts/lib/task-workflow-core.mjs` — R7 运行时与回归。
-5. `skills/export-codex-handoff/SKILL.md` 与 `references/contracts.md` — 新 fresh Compression Task 的执行契约。
-6. `docs/architecture.md` 与 `docs/code-trail.md` — 当前数据流及待追加的 R7 账本。
+1. `docs/slice-plan-action-ready-high-value-handoff.md` — 权威范围、AH0–AH5 证据与 AH6 验收。
+2. `skills/export-codex-handoff/scripts/lib/render-action-ready-handoff.mjs` 与 `scripts/lib/task-workflow-core.mjs` 的 `publishHandoff` — Handoff v2 renderer、Evidence Key 附加和事务发布边界。
+3. `skills/export-codex-handoff/tests/action-ready-ah5.test.mjs`、`action-ready-ah3.test.mjs` 与 `tests/fixtures/action-ready-handoff-fixtures.mjs` — ordering、Cold omission、preflight、consumer 与 fixture 约束。
+4. `skills/export-codex-handoff/references/contracts.md` 与 `skills/export-codex-handoff/SKILL.md` — 冻结兼容契约和执行工作流。
+5. `docs/architecture.md` — 端到端 v2 publication/consumption 数据流。
+6. `docs/adr/0013-action-ready-handoff-hot-cold-boundary.md`、`CONTEXT.md` 与 `docs/code-trail.md` — 决策、规范术语和精确触达账本。
 
 ## 本会话决策摘要
 
-- R7 packaging: continuation MAP 只封装 Critical Anchor 命中的 source units 与独立 workspace observations；完整 Evidence Index 和 Source Thread turn ID 不变（见 continuation-grade slice plan R7）。
-- R7 budget: continuation 有效 evidence cap 从总输入/投影预算派生；100k/20k 默认下为 60k，实际文件总输入 gate 仍是最终权威（见 contracts）。
-- R7 live isolation: `codex-handoff-task-bLt9xi` 永久只作失败诊断；修复验收必须在一个新的 fresh dedicated Compression Task 中执行。
+- AH5 renderer isolation：`continuation-map-v2` 只走独立 execution-first renderer，legacy renderer 与四条冻结兼容路由不变（已落档到 Slice Plan AH5 与 `references/contracts.md`）。
+- AH5 Evidence Key publication：连续 `E1..En` 的 Claim/Anchor 精确映射写入并完整性覆盖于 Evidence Index，Markdown 只显示短 key（已落档到 contracts 与 code trail）。
+- AH5 consumer contract：`synthesize_first` 固定零 pre-draft Evidence Index read、最多三次 named targeted read，并禁止 broad search/full-file reread（已落档到 Skill、contracts 与 architecture）。

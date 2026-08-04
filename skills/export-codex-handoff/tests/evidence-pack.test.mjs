@@ -102,6 +102,8 @@ test("parses semantic events once and emits bounded Tool Receipts", async () => 
     const pack = await buildEvidencePack(SESSION_ID, {
       codexHome: fixture.codexHome,
       maxToolChars: 220,
+      maxProgressInputChars: 1_000,
+      maxProgressDispatchChars: 800,
     });
     assert.equal(pack.source.sessionId, SESSION_ID);
     assert.match(pack.source.sourceRevision, /^sha256:[0-9a-f]{64}$/);
@@ -116,6 +118,21 @@ test("parses semantic events once and emits bounded Tool Receipts", async () => 
     assert.ok(pack.evidenceIndex.anchors.some((entry) => (
       entry.anchor.anchorId === outputReceipt.outputAnchor
     )));
+    assert.equal(pack.progressEvidence.kind, "codex-handoff-progress-evidence");
+    assert.equal(pack.progressEvidence.budgets.maxInputChars, 1_000);
+    assert.equal(pack.progressEvidence.budgets.maxDispatchChars, 800);
+    assert.deepEqual(
+      pack.progressEvidence.assistantProgress.map((reference) => reference.text),
+      ["Implemented"],
+    );
+    assert.equal(pack.progressEvidence.inspections.length, 0);
+    assert.deepEqual(pack.progressEvidence.inputMetrics.operationClassCounts, {
+      content_inspection: 0,
+      existence_probe: 0,
+      verification: 1,
+      mutation: 1,
+      mechanical_success: 0,
+    });
   } finally {
     await fs.promises.rm(root, { recursive: true, force: true });
   }

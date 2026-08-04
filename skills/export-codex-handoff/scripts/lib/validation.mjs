@@ -3,6 +3,7 @@ import {
   sha256Text,
 } from "./evidence-addressing.mjs";
 import { resolveEvidenceReferences } from "./frame-projection.mjs";
+import { classifyToolOperation } from "./progress-evidence.mjs";
 import { ExportHandoffError } from "./source-thread.mjs";
 
 const MAP_CLAIM_FIELDS = [
@@ -52,6 +53,27 @@ const CONTINUATION_EXCLUSION_REASONS = new Set([
   "out_of_scope",
   "no_continuation_value",
 ]);
+const ACTION_READY_FINDING_CLAIM_KINDS = new Set([
+  "completed_work",
+  "conflict",
+  "decision",
+  "rationale",
+  "lesson",
+  "verification",
+]);
+const ACTION_READY_DELIVERABLE_STATUSES = new Set(["ready", "partial", "blocked"]);
+const ACTION_READY_REREAD_POLICIES = new Set([
+  "do_not_reread",
+  "verify_only",
+  "targeted_followup",
+]);
+const WORKING_SYNTHESIS_STATUSES = new Set(["draft_ready", "partial", "blocked"]);
+const RESUME_POLICY_MODES = new Set([
+  "synthesize_first",
+  "execute_next",
+  "resolve_blocker",
+]);
+const RESUME_READ_REASONS = new Set(["claim_verification", "named_uncertainty"]);
 const SPARSE_EXCLUSION_REASONS = new Map([
   ["non_semantic", "excluded by sparse MAP: non-semantic evidence"],
   ["superseded", "excluded by sparse MAP: superseded evidence"],
@@ -1065,6 +1087,993 @@ export function completeContinuationMapResult(result, dictionary, expectedFrame)
   };
 }
 
+function continuationV1Projection(result) {
+  return {
+    formatVersion: 1,
+    kind: CONTINUATION_MAP_KIND,
+    frameId: result.frameId,
+    frameDigest: result.frameDigest,
+    segmentId: result.segmentId,
+    claims: result.claims,
+    relations: result.relations,
+    criticalExclusions: result.criticalExclusions,
+  };
+}
+
+function requireActionReadyFinding(
+  findingsByLocalId,
+  findingId,
+  label,
+) {
+  if (!Number.isInteger(findingId) || findingId < 1) {
+    throw new ExportHandoffError(
+      "INVALID_ACTION_READY_RELATION",
+      `${label} must be a positive local Finding ID`,
+    );
+  }
+  const finding = findingsByLocalId.get(findingId);
+  if (!finding) {
+    throw new ExportHandoffError(
+      "INVALID_ACTION_READY_RELATION",
+      `${label} references unknown local Finding ${findingId}`,
+    );
+  }
+  return finding;
+}
+
+function actionReadyProgressReferences(progressEvidence) {
+  if (!progressEvidence) return null;
+  requireObject(progressEvidence, "Progress Evidence");
+  if (
+    progressEvidence.formatVersion !== 1 ||
+    progressEvidence.kind !== "codex-handoff-progress-evidence" ||
+    !Array.isArray(progressEvidence.assistantProgress) ||
+    !Array.isArray(progressEvidence.inspections)
+  ) {
+    throw new ExportHandoffError(
+      "INVALID_ACTION_READY_RELATION",
+      "continuation-map-v2 requires validated Progress Evidence v1",
+    );
+  }
+  const references = new Map();
+  for (const reference of progressEvidence.assistantProgress) {
+    if (
+      typeof reference?.referenceId !== "string" ||
+      !reference.referenceId ||
+      references.has(reference.referenceId)
+    ) {
+      throw new ExportHandoffError(
+        "INVALID_ACTION_READY_RELATION",
+        "Progress Evidence contains an invalid or duplicate referenceId",
+      );
+    }
+    references.set(reference.referenceId, reference);
+  }
+  const inspections = new Map();
+  for (const inspection of progressEvidence.inspections) {
+    const inspectionId = inspection?.outputEvidence?.referenceId;
+    if (
+      typeof inspectionId !== "string" ||
+      !inspectionId ||
+      references.has(inspectionId) ||
+      inspections.has(inspectionId)
+    ) {
+      throw new ExportHandoffError(
+        "INVALID_ACTION_READY_RELATION",
+        "Progress Evidence contains an invalid or duplicate inspection referenceId",
+      );
+    }
+    references.set(inspectionId, inspection.outputEvidence);
+    inspections.set(inspectionId, inspection);
+  }
+  return { references, inspections };
+}
+
+function validateActionReadyContinuationCandidate(
+  result,
+  dictionary,
+  expectedFrame,
+  progressEvidence,
+) {
+  requireObject(result, "Action-ready Continuation MAP result");
+  requireExactKeys(
+    result,
+    [
+      "formatVersion",
+      "kind",
+      "frameId",
+      "frameDigest",
+      "segmentId",
+      "claims",
+      "relations",
+      "criticalExclusions",
+      "findings",
+      "deliverables",
+      "inspectionDispositions",
+    ],
+    "Action-ready Continuation MAP result",
+  );
+  if (result.formatVersion !== 2 || result.kind !== CONTINUATION_MAP_KIND) {
+    throw new ExportHandoffError(
+      "INVALID_MODEL_OUTPUT",
+      `Action-ready Continuation MAP result must use formatVersion 2 and kind ${CONTINUATION_MAP_KIND}`,
+    );
+  }
+  const projected = continuationV1Projection(result);
+  const { claimsByLocalId } = validateContinuationCandidate(
+    projected,
+    dictionary,
+    expectedFrame,
+  );
+  const progress = actionReadyProgressReferences(progressEvidence);
+  for (const field of ["findings", "deliverables", "inspectionDispositions"]) {
+    if (!Array.isArray(result[field])) {
+      throw new ExportHandoffError(
+        "INVALID_ACTION_READY_RELATION",
+        `${field} must be an array`,
+      );
+    }
+  }
+  if (!progress) {
+    if (
+      result.findings.length > 0 ||
+      result.deliverables.length > 0 ||
+      result.inspectionDispositions.length > 0
+    ) {
+      throw new ExportHandoffError(
+        "INVALID_ACTION_READY_RELATION",
+        "Only a Progress Evidence dispatch may author action-ready relations",
+      );
+    }
+    return {
+      result,
+      claimsByLocalId,
+      findingsByLocalId: new Map(),
+      progress: null,
+    };
+  }
+
+  const findingsByLocalId = new Map();
+  const findingByClaim = new Set();
+  for (const [index, finding] of result.findings.entries()) {
+    const label = `findings[${index}]`;
+    requireObject(finding, label);
+    requireExactKeys(finding, ["localId", "claim"], label);
+    if (!Number.isInteger(finding.localId) || finding.localId < 1) {
+      throw new ExportHandoffError(
+        "INVALID_ACTION_READY_RELATION",
+        `${label}.localId must be positive`,
+      );
+    }
+    if (findingsByLocalId.has(finding.localId)) {
+      throw new ExportHandoffError(
+        "INVALID_ACTION_READY_RELATION",
+        `Duplicate local Finding ${finding.localId}`,
+      );
+    }
+    const claim = continuationClaimByLocalId(
+      claimsByLocalId,
+      finding.claim,
+      `${label}.claim`,
+    );
+    if (!ACTION_READY_FINDING_CLAIM_KINDS.has(claim.kind)) {
+      throw new ExportHandoffError(
+        "INVALID_ACTION_READY_RELATION",
+        `${label}.claim must reference a finding-capable Claim`,
+      );
+    }
+    if (findingByClaim.has(finding.claim)) {
+      throw new ExportHandoffError(
+        "INVALID_ACTION_READY_RELATION",
+        `${label}.claim is already bound to another Finding`,
+      );
+    }
+    findingByClaim.add(finding.claim);
+    findingsByLocalId.set(finding.localId, { ...finding, claim });
+  }
+
+  const referencedFindings = new Set();
+  const deliverableIds = new Set();
+  for (const [index, deliverable] of result.deliverables.entries()) {
+    const label = `deliverables[${index}]`;
+    requireObject(deliverable, label);
+    requireAllowedKeys(
+      deliverable,
+      ["deliverableId", "request", "status", "findingIds"],
+      ["missingReason"],
+      label,
+    );
+    requireString(deliverable.deliverableId, `${label}.deliverableId`);
+    requireString(deliverable.request, `${label}.request`);
+    if (deliverableIds.has(deliverable.deliverableId)) {
+      throw new ExportHandoffError(
+        "INVALID_ACTION_READY_RELATION",
+        `Duplicate deliverableId ${deliverable.deliverableId}`,
+      );
+    }
+    deliverableIds.add(deliverable.deliverableId);
+    if (!ACTION_READY_DELIVERABLE_STATUSES.has(deliverable.status)) {
+      throw new ExportHandoffError(
+        "INVALID_ACTION_READY_RELATION",
+        `${label}.status must be ready, partial, or blocked`,
+      );
+    }
+    requirePositiveIntegerArray(deliverable.findingIds, `${label}.findingIds`, {
+      duplicateCode: "INVALID_ACTION_READY_RELATION",
+    });
+    if (
+      ["ready", "partial"].includes(deliverable.status) &&
+      deliverable.findingIds.length === 0
+    ) {
+      throw new ExportHandoffError(
+        "INVALID_ACTION_READY_RELATION",
+        `${label}.${deliverable.status} must reference at least one Finding`,
+      );
+    }
+    if (deliverable.status === "ready" && Object.hasOwn(deliverable, "missingReason")) {
+      throw new ExportHandoffError(
+        "INVALID_ACTION_READY_RELATION",
+        `${label}.ready cannot include missingReason`,
+      );
+    }
+    if (deliverable.status !== "ready") {
+      requireString(deliverable.missingReason, `${label}.missingReason`);
+    }
+    for (const localId of deliverable.findingIds) {
+      requireActionReadyFinding(findingsByLocalId, localId, `${label}.findingIds`);
+      referencedFindings.add(localId);
+    }
+  }
+  if (
+    ["review", "research", "diagnosis"].includes(expectedFrame?.frame?.taskType) &&
+    result.deliverables.length === 0
+  ) {
+    throw new ExportHandoffError(
+      "INVALID_ACTION_READY_RELATION",
+      "Review, research, and diagnosis Progress Evidence requires a deliverable status",
+    );
+  }
+  for (const localId of findingsByLocalId.keys()) {
+    if (!referencedFindings.has(localId)) {
+      throw new ExportHandoffError(
+        "INVALID_ACTION_READY_RELATION",
+        `Finding ${localId} is not reachable from a requested deliverable`,
+      );
+    }
+  }
+
+  const disposedInspectionIds = new Set();
+  for (const [index, disposition] of result.inspectionDispositions.entries()) {
+    const label = `inspectionDispositions[${index}]`;
+    requireObject(disposition, label);
+    requireExactKeys(
+      disposition,
+      ["inspectionId", "findingIds", "rereadPolicy"],
+      label,
+    );
+    requireString(disposition.inspectionId, `${label}.inspectionId`);
+    const inspection = progress.inspections.get(disposition.inspectionId);
+    if (!inspection || disposedInspectionIds.has(disposition.inspectionId)) {
+      throw new ExportHandoffError(
+        "INVALID_ACTION_READY_RELATION",
+        `${label}.inspectionId is unknown or duplicated`,
+      );
+    }
+    disposedInspectionIds.add(disposition.inspectionId);
+    if (!ACTION_READY_REREAD_POLICIES.has(disposition.rereadPolicy)) {
+      throw new ExportHandoffError(
+        "INVALID_ACTION_READY_RELATION",
+        `${label}.rereadPolicy is invalid`,
+      );
+    }
+    requirePositiveIntegerArray(disposition.findingIds, `${label}.findingIds`, {
+      duplicateCode: "INVALID_ACTION_READY_RELATION",
+    });
+    if (
+      disposition.rereadPolicy !== "targeted_followup" &&
+      disposition.findingIds.length === 0
+    ) {
+      throw new ExportHandoffError(
+        "INVALID_ACTION_READY_RELATION",
+        `${label} must synthesize at least one Finding or use targeted_followup`,
+      );
+    }
+    const inspectionAnchors = new Set(inspection.outputEvidence.anchors || []);
+    for (const localId of disposition.findingIds) {
+      const finding = requireActionReadyFinding(
+        findingsByLocalId,
+        localId,
+        `${label}.findingIds`,
+      );
+      const claimAnchors = resolveEvidenceReferences(
+        dictionary,
+        finding.claim.evidenceIndexes,
+      );
+      if (!claimAnchors.some((anchorId) => inspectionAnchors.has(anchorId))) {
+        throw new ExportHandoffError(
+          "INVALID_ACTION_READY_RELATION",
+          `${label} links Finding ${localId} without the inspected output evidence`,
+        );
+      }
+    }
+  }
+  if (
+    disposedInspectionIds.size !== progress.inspections.size ||
+    [...progress.inspections.keys()].some((inspectionId) => !disposedInspectionIds.has(inspectionId))
+  ) {
+    throw new ExportHandoffError(
+      "INCOMPLETE_INSPECTION_DISPOSITION",
+      "Every Progress Evidence content inspection must be synthesized or targeted for follow-up",
+    );
+  }
+  return { result, claimsByLocalId, findingsByLocalId, progress };
+}
+
+export function validateActionReadyContinuationMapResult(
+  result,
+  dictionary,
+  expectedFrame,
+  progressEvidence = null,
+) {
+  validateActionReadyContinuationCandidate(
+    result,
+    dictionary,
+    expectedFrame,
+    progressEvidence,
+  );
+  return result;
+}
+
+export function completeActionReadyContinuationMapResult(
+  result,
+  dictionary,
+  expectedFrame,
+  progressEvidence = null,
+) {
+  const validated = validateActionReadyContinuationCandidate(
+    result,
+    dictionary,
+    expectedFrame,
+    progressEvidence,
+  );
+  const completedBase = completeContinuationMapResult(
+    continuationV1Projection(result),
+    dictionary,
+    expectedFrame,
+  );
+  const claimIdByLocalId = new Map(
+    result.claims.map((claim, index) => [claim.localId, completedBase.claims[index].claimId]),
+  );
+  const findingIdByLocalId = new Map();
+  const findings = result.findings.map((finding) => {
+    const claimId = claimIdByLocalId.get(finding.claim);
+    const completed = {
+      findingId: `finding-${sha256Text(claimId)}`,
+      claimId,
+    };
+    findingIdByLocalId.set(finding.localId, completed.findingId);
+    return completed;
+  });
+  const globalFindingIds = (localIds) => localIds.map((localId) => (
+    findingIdByLocalId.get(localId)
+  ));
+  return {
+    ...completedBase,
+    formatVersion: 2,
+    findings,
+    deliverables: result.deliverables.map((deliverable) => ({
+      deliverableId: deliverable.deliverableId,
+      request: deliverable.request,
+      status: deliverable.status,
+      findingIds: globalFindingIds(deliverable.findingIds),
+      ...(Object.hasOwn(deliverable, "missingReason")
+        ? { missingReason: deliverable.missingReason }
+        : {}),
+    })),
+    inspectionDispositions: result.inspectionDispositions.map((disposition) => {
+      const inspection = validated.progress.inspections.get(disposition.inspectionId);
+      return {
+        inspectionId: disposition.inspectionId,
+        location: inspection.location,
+        symbols: [...inspection.symbols],
+        scope: inspection.scope,
+        findingIds: globalFindingIds(disposition.findingIds),
+        rereadPolicy: disposition.rereadPolicy,
+      };
+    }),
+  };
+}
+
+function requireKnownFindingIds(value, label, knownFindingIds, options = {}) {
+  requireStringArray(value, label, {
+    nonEmpty: options.nonEmpty,
+    duplicateCode: "INVALID_ACTION_READY_RELATION",
+  });
+  for (const findingId of value) {
+    if (!knownFindingIds.has(findingId)) {
+      throw new ExportHandoffError(
+        "INVALID_ACTION_READY_RELATION",
+        `${label} references unknown Finding ${findingId}`,
+      );
+    }
+  }
+}
+
+export function validateActionReadyReduceResult(result, workingSynthesisInput) {
+  requireObject(result, "Action-ready REDUCE result");
+  requireObject(workingSynthesisInput, "Working Synthesis input");
+  if (
+    workingSynthesisInput.formatVersion !== 1 ||
+    workingSynthesisInput.kind !== "codex-handoff-working-synthesis-input" ||
+    !Array.isArray(workingSynthesisInput.findings) ||
+    !Array.isArray(workingSynthesisInput.deliverables) ||
+    !Array.isArray(workingSynthesisInput.inspections)
+  ) {
+    throw new ExportHandoffError(
+      "INVALID_ACTION_READY_RELATION",
+      "Action-ready REDUCE validation requires a Working Synthesis input v1",
+    );
+  }
+  const knownFindingIds = new Set();
+  for (const [index, finding] of workingSynthesisInput.findings.entries()) {
+    const label = `workingSynthesisInput.findings[${index}]`;
+    requireObject(finding, label);
+    requireExactKeys(finding, ["findingId", "claimId"], label);
+    requireString(finding.findingId, `${label}.findingId`);
+    requireString(finding.claimId, `${label}.claimId`);
+    if (knownFindingIds.has(finding.findingId)) {
+      throw new ExportHandoffError(
+        "INVALID_ACTION_READY_RELATION",
+        `Duplicate Finding ${finding.findingId}`,
+      );
+    }
+    knownFindingIds.add(finding.findingId);
+  }
+
+  requireObject(result.workingSynthesis, "workingSynthesis");
+  requireExactKeys(
+    result.workingSynthesis,
+    ["status", "sections", "confirmedFindingIds", "uncertainties"],
+    "workingSynthesis",
+  );
+  if (!WORKING_SYNTHESIS_STATUSES.has(result.workingSynthesis.status)) {
+    throw new ExportHandoffError(
+      "INVALID_ACTION_READY_RELATION",
+      "workingSynthesis.status must be draft_ready, partial, or blocked",
+    );
+  }
+  if (!Array.isArray(result.workingSynthesis.sections)) {
+    throw new ExportHandoffError(
+      "INVALID_ACTION_READY_RELATION",
+      "workingSynthesis.sections must be an array",
+    );
+  }
+  const sectionFindingIds = new Set();
+  for (const [index, section] of result.workingSynthesis.sections.entries()) {
+    const label = `workingSynthesis.sections[${index}]`;
+    requireObject(section, label);
+    requireExactKeys(section, ["title", "body", "findingIds"], label);
+    requireString(section.title, `${label}.title`);
+    requireString(section.body, `${label}.body`);
+    requireKnownFindingIds(section.findingIds, `${label}.findingIds`, knownFindingIds, {
+      nonEmpty: true,
+    });
+    for (const findingId of section.findingIds) sectionFindingIds.add(findingId);
+  }
+  requireKnownFindingIds(
+    result.workingSynthesis.confirmedFindingIds,
+    "workingSynthesis.confirmedFindingIds",
+    knownFindingIds,
+  );
+  for (const findingId of result.workingSynthesis.confirmedFindingIds) {
+    if (!sectionFindingIds.has(findingId)) {
+      throw new ExportHandoffError(
+        "INVALID_ACTION_READY_RELATION",
+        `Confirmed Finding ${findingId} is absent from Working Synthesis sections`,
+      );
+    }
+  }
+  if (!Array.isArray(result.workingSynthesis.uncertainties)) {
+    throw new ExportHandoffError(
+      "INVALID_ACTION_READY_RELATION",
+      "workingSynthesis.uncertainties must be an array",
+    );
+  }
+  const uncertaintyFindingIds = new Set();
+  for (const [index, uncertainty] of result.workingSynthesis.uncertainties.entries()) {
+    const label = `workingSynthesis.uncertainties[${index}]`;
+    requireObject(uncertainty, label);
+    requireExactKeys(uncertainty, ["question", "allowedScopes", "findingIds"], label);
+    requireString(uncertainty.question, `${label}.question`);
+    requireStringArray(uncertainty.allowedScopes, `${label}.allowedScopes`, {
+      nonEmpty: true,
+      duplicateCode: "INVALID_ACTION_READY_RELATION",
+    });
+    requireKnownFindingIds(uncertainty.findingIds, `${label}.findingIds`, knownFindingIds);
+    for (const findingId of uncertainty.findingIds) uncertaintyFindingIds.add(findingId);
+  }
+  for (const findingId of knownFindingIds) {
+    if (!sectionFindingIds.has(findingId) && !uncertaintyFindingIds.has(findingId)) {
+      throw new ExportHandoffError(
+        "INVALID_ACTION_READY_RELATION",
+        `Finding ${findingId} is absent from Working Synthesis and uncertainties`,
+      );
+    }
+  }
+
+  if (
+    canonicalStringify(result.deliverableStatus) !==
+    canonicalStringify(workingSynthesisInput.deliverables)
+  ) {
+    throw new ExportHandoffError(
+      "INVALID_ACTION_READY_RELATION",
+      "deliverableStatus must preserve every requested deliverable relation exactly",
+    );
+  }
+  if (
+    canonicalStringify(result.inspectedEvidenceMap) !==
+    canonicalStringify(workingSynthesisInput.inspections)
+  ) {
+    throw new ExportHandoffError(
+      "INVALID_ACTION_READY_RELATION",
+      "inspectedEvidenceMap must preserve every completed inspection disposition exactly",
+    );
+  }
+
+  requireObject(result.resumePolicy, "resumePolicy");
+  requireExactKeys(
+    result.resumePolicy,
+    [
+      "mode",
+      "firstDeliverableIds",
+      "maxTargetedReads",
+      "allowedReadReasons",
+      "forbidBroadSearch",
+      "forbidFullFileReread",
+    ],
+    "resumePolicy",
+  );
+  if (!RESUME_POLICY_MODES.has(result.resumePolicy.mode)) {
+    throw new ExportHandoffError(
+      "INVALID_ACTION_READY_RELATION",
+      "resumePolicy.mode is invalid",
+    );
+  }
+  requireStringArray(result.resumePolicy.firstDeliverableIds, "resumePolicy.firstDeliverableIds", {
+    nonEmpty: true,
+    duplicateCode: "INVALID_ACTION_READY_RELATION",
+  });
+  const deliverableIds = new Set(
+    workingSynthesisInput.deliverables.map((deliverable) => deliverable.deliverableId),
+  );
+  for (const deliverableId of result.resumePolicy.firstDeliverableIds) {
+    if (!deliverableIds.has(deliverableId)) {
+      throw new ExportHandoffError(
+        "INVALID_ACTION_READY_RELATION",
+        `resumePolicy references unknown deliverable ${deliverableId}`,
+      );
+    }
+  }
+  if (!Number.isInteger(result.resumePolicy.maxTargetedReads) || result.resumePolicy.maxTargetedReads < 0) {
+    throw new ExportHandoffError(
+      "INVALID_ACTION_READY_RELATION",
+      "resumePolicy.maxTargetedReads must be a non-negative integer",
+    );
+  }
+  requireStringArray(result.resumePolicy.allowedReadReasons, "resumePolicy.allowedReadReasons", {
+    duplicateCode: "INVALID_ACTION_READY_RELATION",
+  });
+  if (result.resumePolicy.allowedReadReasons.some((reason) => !RESUME_READ_REASONS.has(reason))) {
+    throw new ExportHandoffError(
+      "INVALID_ACTION_READY_RELATION",
+      "resumePolicy.allowedReadReasons contains an unsupported reason",
+    );
+  }
+  for (const field of ["forbidBroadSearch", "forbidFullFileReread"]) {
+    if (typeof result.resumePolicy[field] !== "boolean") {
+      throw new ExportHandoffError(
+        "INVALID_ACTION_READY_RELATION",
+        `resumePolicy.${field} must be boolean`,
+      );
+    }
+  }
+  return result;
+}
+
+function actionReadyGateFailure(code, message) {
+  throw new ExportHandoffError(code, message);
+}
+
+function validateActionReadyActionability(result, workingSynthesisInput, taskType) {
+  const requiredFields = [
+    "workingSynthesis",
+    "deliverableStatus",
+    "inspectedEvidenceMap",
+    "resumePolicy",
+  ];
+  if (requiredFields.some((field) => !Object.hasOwn(result, field))) {
+    actionReadyGateFailure(
+      "HANDOFF_NOT_ACTIONABLE",
+      "Action-ready continuation requires Working Synthesis, Deliverable Status, Inspected Evidence Map, and Resume Policy",
+    );
+  }
+  if (!["review", "research", "diagnosis"].includes(taskType)) return;
+
+  const synthesis = result.workingSynthesis;
+  const policy = result.resumePolicy;
+  if (
+    !synthesis ||
+    !["draft_ready", "partial"].includes(synthesis.status) ||
+    !Array.isArray(synthesis.sections) ||
+    synthesis.sections.length === 0
+  ) {
+    actionReadyGateFailure(
+      "HANDOFF_NOT_ACTIONABLE",
+      `${taskType} continuation requires a non-empty draft-ready or partial Working Synthesis`,
+    );
+  }
+  if (
+    synthesis.status === "partial" &&
+    (!Array.isArray(synthesis.uncertainties) || synthesis.uncertainties.length === 0)
+  ) {
+    actionReadyGateFailure(
+      "HANDOFF_NOT_ACTIONABLE",
+      "Partial Working Synthesis requires at least one named uncertainty",
+    );
+  }
+  if (
+    !Array.isArray(result.deliverableStatus) ||
+    result.deliverableStatus.length !== workingSynthesisInput.deliverables.length ||
+    !result.deliverableStatus.some((deliverable) => (
+      deliverable?.status === "ready" || deliverable?.status === "partial"
+    ))
+  ) {
+    actionReadyGateFailure(
+      "HANDOFF_NOT_ACTIONABLE",
+      "Action-ready continuation must disposition every deliverable and leave at least one usable deliverable",
+    );
+  }
+  const usableDeliverables = new Set(
+    result.deliverableStatus
+      .filter((deliverable) => ["ready", "partial"].includes(deliverable?.status))
+      .map((deliverable) => deliverable.deliverableId),
+  );
+  if (
+    !policy ||
+    policy.mode !== "synthesize_first" ||
+    !Array.isArray(policy.firstDeliverableIds) ||
+    policy.firstDeliverableIds.length === 0 ||
+    policy.firstDeliverableIds.some((deliverableId) => !usableDeliverables.has(deliverableId)) ||
+    !Number.isInteger(policy.maxTargetedReads) ||
+    policy.maxTargetedReads > 3 ||
+    policy.forbidBroadSearch !== true ||
+    policy.forbidFullFileReread !== true
+  ) {
+    actionReadyGateFailure(
+      "HANDOFF_NOT_ACTIONABLE",
+      `${taskType} continuation must synthesize first and allow at most three bounded targeted reads`,
+    );
+  }
+}
+
+function actionReadyGateContext(context) {
+  requireObject(context, "Action-ready gate context");
+  requireObject(context.currentGoal, "Action-ready currentGoal");
+  requireObject(context.claimTable, "Action-ready Claim table");
+  requireObject(context.workingSynthesisInput, "Action-ready Working Synthesis input");
+  const explicitExclusions = context.explicitExclusions ?? [];
+  if (!Array.isArray(explicitExclusions)) {
+    throw new ExportHandoffError(
+      "INVALID_ACTION_READY_RELATION",
+      "Action-ready explicit exclusions must be an array",
+    );
+  }
+  if (
+    context.claimTable.formatVersion !== 1 ||
+    context.claimTable.kind !== CONTINUATION_CLAIM_TABLE_KIND ||
+    !Array.isArray(context.claimTable.claims)
+  ) {
+    throw new ExportHandoffError(
+      "INVALID_ACTION_READY_RELATION",
+      "Information Value validation requires a continuation Claim table v1",
+    );
+  }
+  const knownAnchors = continuationEvidenceAnchorLookup(context.evidenceIndex);
+  validateClaim(
+    context.currentGoal,
+    "Action-ready currentGoal",
+    knownAnchors,
+    "UNKNOWN_EVIDENCE_ANCHOR",
+  );
+  const claimsById = new Map();
+  for (const [index, claim] of context.claimTable.claims.entries()) {
+    validateClaim(
+      claim,
+      `Action-ready Claim table claims[${index}]`,
+      knownAnchors,
+      "UNKNOWN_EVIDENCE_ANCHOR",
+    );
+    if (claimsById.has(claim.claimId)) {
+      throw new ExportHandoffError(
+        "DUPLICATE_CLAIM",
+        `Action-ready Claim table contains duplicate Claim ${claim.claimId}`,
+      );
+    }
+    claimsById.set(claim.claimId, claim);
+  }
+  const existingGoal = claimsById.get(context.currentGoal.claimId);
+  if (
+    existingGoal &&
+    canonicalStringify(existingGoal) !== canonicalStringify(context.currentGoal)
+  ) {
+    throw new ExportHandoffError(
+      "DUPLICATE_CLAIM",
+      "Action-ready currentGoal conflicts with the completed Claim table",
+    );
+  }
+  const rootClaimIds = new Set([context.currentGoal.claimId, ...claimsById.keys()]);
+  for (const [index, exclusion] of explicitExclusions.entries()) {
+    validateClaim(
+      exclusion,
+      `Action-ready explicitExclusions[${index}]`,
+      knownAnchors,
+      "UNKNOWN_EVIDENCE_ANCHOR",
+    );
+    if (exclusion.kind !== "explicit_exclusion" || rootClaimIds.has(exclusion.claimId)) {
+      throw new ExportHandoffError(
+        "INVALID_ACTION_READY_RELATION",
+        `Action-ready explicitExclusions[${index}] is not a unique explicit_exclusion Claim`,
+      );
+    }
+    rootClaimIds.add(exclusion.claimId);
+  }
+  validateContinuationGlobalRelations(
+    context.claimTable.relations,
+    claimsById,
+    "Action-ready Claim table relations",
+  );
+  const findingsById = new Map();
+  for (const [index, finding] of context.workingSynthesisInput.findings.entries()) {
+    requireObject(finding, `workingSynthesisInput.findings[${index}]`);
+    requireExactKeys(
+      finding,
+      ["findingId", "claimId"],
+      `workingSynthesisInput.findings[${index}]`,
+    );
+    requireString(finding.findingId, `workingSynthesisInput.findings[${index}].findingId`);
+    requireString(finding.claimId, `workingSynthesisInput.findings[${index}].claimId`);
+    if (findingsById.has(finding.findingId) || !claimsById.has(finding.claimId)) {
+      throw new ExportHandoffError(
+        "INVALID_ACTION_READY_RELATION",
+        `${finding.findingId} is duplicated or references a Claim outside the completed table`,
+      );
+    }
+    findingsById.set(finding.findingId, finding);
+  }
+  return { knownAnchors, claimsById, findingsById, explicitExclusions };
+}
+
+function actionReadyResultClaim(claim, claimsById, expectedKind, label) {
+  const source = claimsById.get(claim?.claimId);
+  if (
+    !source ||
+    source.kind !== expectedKind ||
+    canonicalStringify(source) !== canonicalStringify(claim)
+  ) {
+    actionReadyGateFailure(
+      "HANDOFF_LOW_VALUE",
+      `${label} is not an exact root-reachable ${expectedKind} Claim`,
+    );
+  }
+  return source;
+}
+
+function actionReadyFindingClaim(findingId, findingsById, claimsById, label) {
+  const finding = findingsById.get(findingId);
+  const claim = finding && claimsById.get(finding.claimId);
+  if (!claim) {
+    throw new ExportHandoffError(
+      "INVALID_ACTION_READY_RELATION",
+      `${label} references unknown Finding ${findingId}`,
+    );
+  }
+  return claim;
+}
+
+function actionReadyVerificationClass(claimId, relations) {
+  const matches = relations.verification.filter((relation) => relation.claim === claimId);
+  if (matches.length !== 1) return "mechanical_success";
+  return classifyToolOperation({
+    inputReceipt: {
+      previewHead: JSON.stringify({ command: matches[0].command }),
+      previewTail: "",
+    },
+  });
+}
+
+export function buildActionReadyHotContextProjection(result, context) {
+  const {
+    claimsById,
+    findingsById,
+    explicitExclusions,
+  } = actionReadyGateContext(context);
+  const hotClaimsById = new Map();
+  const retain = (claim) => {
+    hotClaimsById.set(claim.claimId, claim);
+    return claim;
+  };
+  retain(context.currentGoal);
+  const retainedExplicitExclusions = explicitExclusions.map(retain);
+
+  const findingClaims = new Map();
+  for (const finding of context.workingSynthesisInput.findings) {
+    const claim = actionReadyFindingClaim(
+      finding.findingId,
+      findingsById,
+      claimsById,
+      "Working Synthesis input",
+    );
+    if (
+      claim.kind === "verification" &&
+      actionReadyVerificationClass(claim.claimId, context.claimTable.relations) !== "verification"
+    ) {
+      actionReadyGateFailure(
+        "HANDOFF_LOW_VALUE",
+        `Finding ${finding.findingId} promotes an existence probe or mechanical success into Hot Context`,
+      );
+    }
+    findingClaims.set(finding.findingId, retain(claim));
+  }
+
+  const constraints = (result.constraints || []).map((claim, index) => retain(
+    actionReadyResultClaim(
+      claim,
+      claimsById,
+      "constraint",
+      `constraints[${index}]`,
+    ),
+  ));
+  const nextActions = (result.nextActions || []).map((claim, index) => retain(
+    actionReadyResultClaim(
+      claim,
+      claimsById,
+      "next_action",
+      `nextActions[${index}]`,
+    ),
+  ));
+  const decisions = context.claimTable.relations.decisions
+    .filter((decision) => decision.status === "active")
+    .map((decision) => ({
+      statement: retain(claimsById.get(decision.statement)),
+      rationale: decision.rationale.map((claimId) => retain(claimsById.get(claimId))),
+    }));
+
+  const sortedClaims = [...hotClaimsById.values()].sort((left, right) => (
+    left.claimId < right.claimId ? -1 : left.claimId > right.claimId ? 1 : 0
+  ));
+  const keyByClaimId = new Map(
+    sortedClaims.map((claim, index) => [claim.claimId, `E${index + 1}`]),
+  );
+  const evidenceKeys = (findingIds) => findingIds.map((findingId) => (
+    keyByClaimId.get(findingClaims.get(findingId).claimId)
+  ));
+  const hotContext = {
+    objective: {
+      text: context.currentGoal.text,
+      evidenceKey: keyByClaimId.get(context.currentGoal.claimId),
+    },
+    explicitExclusions: retainedExplicitExclusions.map((claim) => ({
+      text: claim.text,
+      evidenceKey: keyByClaimId.get(claim.claimId),
+    })),
+    workingSynthesis: {
+      status: result.workingSynthesis.status,
+      sections: result.workingSynthesis.sections.map((section) => ({
+        title: section.title,
+        body: section.body,
+        evidenceKeys: evidenceKeys(section.findingIds),
+      })),
+      confirmedFindings: result.workingSynthesis.confirmedFindingIds.map((findingId) => {
+        const finding = findingClaims.get(findingId);
+        return {
+          text: finding.text,
+          evidenceKey: keyByClaimId.get(finding.claimId),
+        };
+      }),
+      uncertainties: result.workingSynthesis.uncertainties.map((uncertainty) => ({
+        question: uncertainty.question,
+        allowedScopes: [...uncertainty.allowedScopes],
+        evidenceKeys: evidenceKeys(uncertainty.findingIds),
+      })),
+    },
+    deliverableStatus: result.deliverableStatus.map((deliverable) => ({
+      deliverableId: deliverable.deliverableId,
+      request: deliverable.request,
+      status: deliverable.status,
+      evidenceKeys: evidenceKeys(deliverable.findingIds),
+      ...(Object.hasOwn(deliverable, "missingReason")
+        ? { missingReason: deliverable.missingReason }
+        : {}),
+    })),
+    constraints: constraints.map((claim) => ({
+      text: claim.text,
+      evidenceKey: keyByClaimId.get(claim.claimId),
+    })),
+    decisions: decisions.map((decision) => ({
+      statement: {
+        text: decision.statement.text,
+        evidenceKey: keyByClaimId.get(decision.statement.claimId),
+      },
+      rationale: decision.rationale.map((claim) => ({
+        text: claim.text,
+        evidenceKey: keyByClaimId.get(claim.claimId),
+      })),
+    })),
+    inspectedEvidenceMap: result.inspectedEvidenceMap.map((inspection) => ({
+      location: inspection.location,
+      symbols: [...inspection.symbols],
+      scope: inspection.scope,
+      evidenceKeys: evidenceKeys(inspection.findingIds),
+      rereadPolicy: inspection.rereadPolicy,
+    })),
+    nextActions: nextActions.map((claim) => ({
+      text: claim.text,
+      evidenceKey: keyByClaimId.get(claim.claimId),
+    })),
+    relevantVerifications: context.claimTable.relations.verification
+      .filter((verification) => {
+        const claim = hotClaimsById.get(verification.claim);
+        return claim?.kind === "verification" &&
+          actionReadyVerificationClass(claim.claimId, context.claimTable.relations) === "verification";
+      })
+      .map((verification) => ({
+        command: verification.command,
+        result: verification.result,
+        evidenceKey: keyByClaimId.get(verification.claim),
+      })),
+    resumePolicy: structuredClone(result.resumePolicy),
+  };
+  const serializedHotContext = canonicalStringify(hotContext);
+  const rawIdentifiers = [
+    context.currentGoal.claimId,
+    ...context.currentGoal.anchors,
+    ...explicitExclusions.flatMap((claim) => [claim.claimId, ...claim.anchors]),
+    ...context.claimTable.claims.map((claim) => claim.claimId),
+    ...context.evidenceIndex.anchors.map((entry) => entry.anchor.anchorId),
+  ];
+  if (rawIdentifiers.some((identifier) => serializedHotContext.includes(identifier))) {
+    actionReadyGateFailure(
+      "HANDOFF_LOW_VALUE",
+      "Hot Context contains a raw Claim ID or Evidence Anchor instead of a Handoff Evidence Key",
+    );
+  }
+  return {
+    formatVersion: 1,
+    kind: "codex-handoff-action-ready-projection",
+    hotContext,
+    evidenceKeyMap: {
+      formatVersion: 1,
+      kind: "codex-handoff-evidence-key-map",
+      entries: sortedClaims.map((claim) => ({
+        key: keyByClaimId.get(claim.claimId),
+        claimId: claim.claimId,
+        anchors: [...claim.anchors],
+      })),
+    },
+  };
+}
+
+export function validateActionReadyHandoffGates(result, context) {
+  requireObject(result, "Action-ready REDUCE result");
+  validateActionReadyActionability(
+    result,
+    context.workingSynthesisInput,
+    context.taskType,
+  );
+  validateActionReadyReduceResult(result, context.workingSynthesisInput);
+  return buildActionReadyHotContextProjection(result, context);
+}
+
 function continuationEvidenceAnchorLookup(evidenceIndex) {
   if (!Array.isArray(evidenceIndex?.anchors)) {
     throw new ExportHandoffError(
@@ -1623,6 +2632,288 @@ export function buildContinuationDownstream(
         };
       }),
       claims: sourceClaims,
+    },
+  };
+}
+
+function completedContinuationV1Projection(completed) {
+  return {
+    formatVersion: 1,
+    kind: COMPLETED_CONTINUATION_MAP_KIND,
+    frameId: completed.frameId,
+    frameDigest: completed.frameDigest,
+    segmentId: completed.segmentId,
+    claims: completed.claims,
+    relations: completed.relations,
+    criticalExclusions: completed.criticalExclusions,
+  };
+}
+
+function validateCompletedActionReadyMap(completed, label) {
+  requireObject(completed, label);
+  requireExactKeys(
+    completed,
+    [
+      "formatVersion",
+      "kind",
+      "frameId",
+      "frameDigest",
+      "segmentId",
+      "claims",
+      "relations",
+      "criticalExclusions",
+      "findings",
+      "deliverables",
+      "inspectionDispositions",
+    ],
+    label,
+  );
+  if (
+    completed.formatVersion !== 2 ||
+    completed.kind !== COMPLETED_CONTINUATION_MAP_KIND
+  ) {
+    throw new ExportHandoffError(
+      "INVALID_MODEL_OUTPUT",
+      `${label} is not a completed continuation-map-v2 result`,
+    );
+  }
+  for (const field of ["findings", "deliverables", "inspectionDispositions"]) {
+    if (!Array.isArray(completed[field])) {
+      throw new ExportHandoffError(
+        "INVALID_ACTION_READY_RELATION",
+        `${label}.${field} must be an array`,
+      );
+    }
+  }
+  const claimIds = new Set((completed.claims || []).map((claim) => claim?.claimId));
+  const findingIds = new Set();
+  for (const [index, finding] of completed.findings.entries()) {
+    const findingLabel = `${label}.findings[${index}]`;
+    requireObject(finding, findingLabel);
+    requireExactKeys(finding, ["findingId", "claimId"], findingLabel);
+    requireString(finding.findingId, `${findingLabel}.findingId`);
+    requireString(finding.claimId, `${findingLabel}.claimId`);
+    if (
+      finding.findingId !== `finding-${sha256Text(finding.claimId)}` ||
+      !claimIds.has(finding.claimId) ||
+      findingIds.has(finding.findingId)
+    ) {
+      throw new ExportHandoffError(
+        "INVALID_ACTION_READY_RELATION",
+        `${findingLabel} is not bound to one local completed Claim`,
+      );
+    }
+    findingIds.add(finding.findingId);
+  }
+  const deliverableIds = new Set();
+  for (const [index, deliverable] of completed.deliverables.entries()) {
+    const deliverableLabel = `${label}.deliverables[${index}]`;
+    requireObject(deliverable, deliverableLabel);
+    requireAllowedKeys(
+      deliverable,
+      ["deliverableId", "request", "status", "findingIds"],
+      ["missingReason"],
+      deliverableLabel,
+    );
+    requireString(deliverable.deliverableId, `${deliverableLabel}.deliverableId`);
+    requireString(deliverable.request, `${deliverableLabel}.request`);
+    requireKnownFindingIds(
+      deliverable.findingIds,
+      `${deliverableLabel}.findingIds`,
+      findingIds,
+    );
+    if (
+      !ACTION_READY_DELIVERABLE_STATUSES.has(deliverable.status) ||
+      deliverableIds.has(deliverable.deliverableId)
+    ) {
+      throw new ExportHandoffError(
+        "INVALID_ACTION_READY_RELATION",
+        `${deliverableLabel} has an invalid or duplicate status relation`,
+      );
+    }
+    deliverableIds.add(deliverable.deliverableId);
+    if (deliverable.status !== "ready") {
+      requireString(deliverable.missingReason, `${deliverableLabel}.missingReason`);
+    }
+  }
+  const inspectionIds = new Set();
+  for (const [index, inspection] of completed.inspectionDispositions.entries()) {
+    const inspectionLabel = `${label}.inspectionDispositions[${index}]`;
+    requireObject(inspection, inspectionLabel);
+    requireExactKeys(
+      inspection,
+      [
+        "inspectionId",
+        "location",
+        "symbols",
+        "scope",
+        "findingIds",
+        "rereadPolicy",
+      ],
+      inspectionLabel,
+    );
+    requireString(inspection.inspectionId, `${inspectionLabel}.inspectionId`);
+    if (inspection.location !== null) requireString(inspection.location, `${inspectionLabel}.location`);
+    requireStringArray(inspection.symbols, `${inspectionLabel}.symbols`, {
+      duplicateCode: "INVALID_ACTION_READY_RELATION",
+    });
+    if (inspection.scope !== null) requireString(inspection.scope, `${inspectionLabel}.scope`);
+    requireKnownFindingIds(
+      inspection.findingIds,
+      `${inspectionLabel}.findingIds`,
+      findingIds,
+    );
+    if (
+      !ACTION_READY_REREAD_POLICIES.has(inspection.rereadPolicy) ||
+      inspectionIds.has(inspection.inspectionId)
+    ) {
+      throw new ExportHandoffError(
+        "INVALID_ACTION_READY_RELATION",
+        `${inspectionLabel} has an invalid or duplicate disposition`,
+      );
+    }
+    inspectionIds.add(inspection.inspectionId);
+  }
+  return completed;
+}
+
+function actionReadyMaps(completedMaps) {
+  if (!Array.isArray(completedMaps) || completedMaps.length === 0) {
+    throw new ExportHandoffError(
+      "INCOMPLETE_CONTINUATION_COVERAGE",
+      "Action-ready continuation requires completed continuation-map-v2 results",
+    );
+  }
+  const actionAuthors = [];
+  const projected = completedMaps.map((completed, index) => {
+    validateCompletedActionReadyMap(completed, `completedMaps[${index}]`);
+    if (
+      completed.findings.length > 0 ||
+      completed.deliverables.length > 0 ||
+      completed.inspectionDispositions.length > 0
+    ) {
+      actionAuthors.push(completed);
+    }
+    return completedContinuationV1Projection(completed);
+  });
+  if (actionAuthors.length !== 1) {
+    throw new ExportHandoffError(
+      "INVALID_ACTION_READY_RELATION",
+      "Exactly one Progress Evidence MAP result must author action-ready relations",
+    );
+  }
+  return { projected, actionAuthor: actionAuthors[0] };
+}
+
+export function buildActionReadyContinuationParentCoverage(
+  completedMaps,
+  parentTurnId,
+  evidenceIndex,
+  deterministicClaims = {},
+) {
+  return buildContinuationParentCoverage(
+    completedMaps.map((completed, index) => completedContinuationV1Projection(
+      validateCompletedActionReadyMap(completed, `completedMaps[${index}]`),
+    )),
+    parentTurnId,
+    evidenceIndex,
+    deterministicClaims,
+  );
+}
+
+export function buildActionReadyContinuationDownstream(
+  completedMaps,
+  expectedTurnIds,
+  evidenceIndex,
+  preservationLedger,
+  progressEvidence,
+  deterministicClaims = {},
+) {
+  const { projected, actionAuthor } = actionReadyMaps(completedMaps);
+  const downstream = buildContinuationDownstream(
+    projected,
+    expectedTurnIds,
+    evidenceIndex,
+    preservationLedger,
+    deterministicClaims,
+  );
+  const progress = actionReadyProgressReferences(progressEvidence);
+  if (!progress) {
+    throw new ExportHandoffError(
+      "INVALID_ACTION_READY_RELATION",
+      "Action-ready downstream requires Progress Evidence",
+    );
+  }
+  const claimsById = new Map(
+    downstream.claimTable.claims.map((claim) => [claim.claimId, claim]),
+  );
+  const findings = actionAuthor.findings.map((finding) => {
+    if (!claimsById.has(finding.claimId)) {
+      throw new ExportHandoffError(
+        "INVALID_ACTION_READY_RELATION",
+        `${finding.findingId} references a Claim absent from the completed Claim table`,
+      );
+    }
+    return structuredClone(finding);
+  });
+  const findingsById = new Map(findings.map((finding) => [finding.findingId, finding]));
+  const inspections = actionAuthor.inspectionDispositions.map((disposition) => {
+    const source = progress.inspections.get(disposition.inspectionId);
+    if (
+      !source ||
+      canonicalStringify({
+        location: disposition.location,
+        symbols: disposition.symbols,
+        scope: disposition.scope,
+      }) !== canonicalStringify({
+        location: source.location,
+        symbols: source.symbols,
+        scope: source.scope,
+      })
+    ) {
+      throw new ExportHandoffError(
+        "INVALID_ACTION_READY_RELATION",
+        `${disposition.inspectionId} changed its Progress Evidence coordinates`,
+      );
+    }
+    for (const findingId of disposition.findingIds) {
+      const finding = findingsById.get(findingId);
+      const claim = finding && claimsById.get(finding.claimId);
+      const inspectionAnchors = new Set(source.outputEvidence.anchors || []);
+      if (!claim || !claim.anchors.some((anchorId) => inspectionAnchors.has(anchorId))) {
+        throw new ExportHandoffError(
+          "INVALID_ACTION_READY_RELATION",
+          `${disposition.inspectionId} has an unsupported Finding relation`,
+        );
+      }
+    }
+    return {
+      location: disposition.location,
+      symbols: [...disposition.symbols],
+      scope: disposition.scope,
+      findingIds: [...disposition.findingIds],
+      rereadPolicy: disposition.rereadPolicy,
+    };
+  });
+  if (
+    inspections.length !== progress.inspections.size ||
+    actionAuthor.inspectionDispositions.some(
+      (disposition) => !progress.inspections.has(disposition.inspectionId),
+    )
+  ) {
+    throw new ExportHandoffError(
+      "INCOMPLETE_INSPECTION_DISPOSITION",
+      "Completed continuation-map-v2 results must dispose every Progress Evidence inspection",
+    );
+  }
+  return {
+    ...downstream,
+    workingSynthesisInput: {
+      formatVersion: 1,
+      kind: "codex-handoff-working-synthesis-input",
+      findings,
+      deliverables: structuredClone(actionAuthor.deliverables),
+      inspections,
     },
   };
 }
@@ -2367,6 +3658,11 @@ export function validateReduceResult(
       "PROVENANCE_NOT_DERIVED",
       "Continuation REDUCE must include deterministic sourceTurnIds",
     );
+  }
+  if (context.actionReadyGateContext) {
+    validateActionReadyHandoffGates(result, context.actionReadyGateContext);
+  } else if (context.workingSynthesisInput) {
+    validateActionReadyReduceResult(result, context.workingSynthesisInput);
   }
   return result;
 }
