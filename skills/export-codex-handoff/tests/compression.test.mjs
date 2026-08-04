@@ -273,6 +273,36 @@ async function prepareReadyPublication(root, options = {}) {
   return prepared;
 }
 
+test("prepare reserves exact publication targets from workspace status evidence", async () => {
+  const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "codex-handoff-publication-targets-"));
+  try {
+    const outputPath = path.join(root, "handoff.md");
+    const evidenceIndexPath = path.join(root, "custom.evidence.json");
+    let packOptions = null;
+    const prepared = await prepareCompressionTask({
+      sessionId: SESSION_ID,
+      outputPath,
+      evidenceIndexPath,
+      workRoot: root,
+      maxChunkChars: 4_000,
+    }, {
+      buildEvidencePack: async (_sessionId, options) => {
+        packOptions = options;
+        return evidencePack();
+      },
+    });
+
+    assert.deepEqual(packOptions.publicationOutputPaths, [
+      path.resolve(outputPath),
+      path.resolve(evidenceIndexPath),
+    ]);
+    assert.equal(prepared.outputPath, path.resolve(outputPath));
+    assert.equal(prepared.evidenceIndexPath, path.resolve(evidenceIndexPath));
+  } finally {
+    await fs.promises.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("prepares a managed Compression Task workspace", async () => {
   const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "codex-handoff-prepare-"));
   try {

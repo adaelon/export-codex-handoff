@@ -118,6 +118,42 @@ function commandObservation(cwd, observationId, args, result, payloadPath) {
   };
 }
 
+function isPathWithin(root, target) {
+  const relative = path.relative(root, target);
+  return Boolean(relative) &&
+    !path.isAbsolute(relative) &&
+    relative !== ".." &&
+    !relative.startsWith(`..${path.sep}`);
+}
+
+function gitLiteralPathspec(relativePath, options = {}) {
+  const slashPath = relativePath.split(path.sep).join("/");
+  const magic = options.exclude ? "exclude,top,literal" : "top,literal";
+  return `:(${magic})${slashPath}`;
+}
+
+async function publicationStatusExclusions(cwd, publicationOutputPaths, commandRunner) {
+  if (!Array.isArray(publicationOutputPaths) || publicationOutputPaths.length === 0) return [];
+  const topLevel = await commandRunner(cwd, ["rev-parse", "--show-toplevel"]);
+  if (!topLevel.ok || !topLevel.stdout.trim()) return [];
+  const repositoryRoot = path.resolve(topLevel.stdout.trim());
+  const exclusions = new Set();
+  for (const outputPath of publicationOutputPaths) {
+    if (typeof outputPath !== "string" || !outputPath.trim()) continue;
+    const resolvedOutput = path.resolve(outputPath);
+    if (!isPathWithin(repositoryRoot, resolvedOutput)) continue;
+    const relativeOutput = path.relative(repositoryRoot, resolvedOutput);
+    const tracked = await commandRunner(cwd, [
+      "ls-files",
+      "--",
+      gitLiteralPathspec(relativeOutput),
+    ]);
+    if (!tracked.ok || tracked.stdout.trim()) continue;
+    exclusions.add(gitLiteralPathspec(relativeOutput, { exclude: true }));
+  }
+  return [...exclusions].sort((left, right) => left.localeCompare(right, "en"));
+}
+
 function materializeEntries(sourceRevision, observations) {
   return observations.map((observation) => createEvidenceEntry({
     sourceKind: "workspace",
@@ -208,9 +244,18 @@ export async function captureWorkspaceSnapshot(cwd, options = {}) {
     };
   }
 
+  const statusExclusions = await publicationStatusExclusions(
+    resolvedCwd,
+    options.publicationOutputPaths,
+    commandRunner,
+  );
+  const statusArgs = statusExclusions.length > 0
+    ? ["status", "--short", "--branch", "--", ":(top)", ...statusExclusions]
+    : ["status", "--short", "--branch"];
+
   const commands = [
     ["head", ["rev-parse", "HEAD"], "head"],
-    ["status", ["status", "--short", "--branch"], "branchAndStatus"],
+    ["status", statusArgs, "branchAndStatus"],
     ["log", ["log", "--oneline", "-5"], "recentCommits"],
     ["diffStat", ["diff", "--stat"], "unstagedDiffStat"],
     ["cachedDiffStat", ["diff", "--cached", "--stat"], "stagedDiffStat"],

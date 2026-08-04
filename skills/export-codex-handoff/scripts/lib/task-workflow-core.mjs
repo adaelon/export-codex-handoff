@@ -1430,6 +1430,7 @@ export async function prepareCompressionTask(options, dependencies = {}) {
     maxToolChars: options.maxToolChars,
     maxCheckpointChars: options.maxCheckpointChars,
     maxObservationChars: options.maxObservationChars,
+    publicationOutputPaths: [outputPath, publishedEvidenceIndexPath],
   });
   let evidenceIndex = builtPack.evidenceIndex;
   const evidencePack = { ...builtPack };

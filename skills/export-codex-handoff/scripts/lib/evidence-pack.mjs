@@ -22,6 +22,7 @@ export async function buildEvidencePack(sessionId, options = {}) {
     maxCheckpointChars: options.maxCheckpointChars,
     maxObservationChars: options.maxObservationChars,
     commandRunner: options.commandRunner,
+    publicationOutputPaths: options.publicationOutputPaths,
   });
   const workspaceEntries = capturedWorkspace.evidenceEntries || [];
   const workspace = { ...capturedWorkspace };

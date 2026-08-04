@@ -579,3 +579,13 @@
 
 **Entry point**: After `validate-reduce <workDir> --check`, `publish <workDir>` routes only `continuation-map-v2` through the Handoff v2 renderer and returns `consumerContract`.
 **Test**: AH5 passes 2/2; AH0–AH5 pass 19/19; the complete repository suite passes 148/148 with legacy v1, missing-mode v2, `sparse-map-v1`, and `continuation-map-v1` unchanged.
+
+## 2026-08-04 Published-output-stable workspace verification
+
+**Touched**:
+- `skills/export-codex-handoff/scripts/lib/workspace-snapshot.mjs:publicationStatusExclusions / captureWorkspaceSnapshot` — encodes only exact untracked publication targets as integrity-bound negative Git pathspecs while retaining tracked and unrelated workspace changes.
+- `skills/export-codex-handoff/scripts/lib/evidence-pack.mjs:buildEvidencePack` and `scripts/lib/task-workflow-core.mjs:prepareCompressionTask` — carry the resolved Handoff and Evidence Index targets into workspace capture before either file exists.
+- `skills/export-codex-handoff/tests/evidence-pack.test.mjs` and `tests/compression.test.mjs` — reproduce post-publication self-contamination, prove standalone verification succeeds, preserve unrelated-change rejection, and lock custom output-path wiring.
+
+**Entry point**: Prepare and publish a Handoff inside the Source Thread Git worktree, then run `verify-evidence` without moving either public artifact.
+**Test**: Evidence Pack and Compression focused regressions pass 18/18; the complete repository suite passes 154/154.

@@ -11,6 +11,11 @@ import {
   validateSessionId,
 } from "../scripts/lib/source-thread.mjs";
 import { buildEvidencePack } from "../scripts/lib/evidence-pack.mjs";
+import {
+  buildEvidenceIndex,
+  verifyEvidenceIndex,
+} from "../scripts/lib/evidence-index.mjs";
+import { hashFileRevision } from "../scripts/lib/evidence-addressing.mjs";
 import { captureWorkspaceSnapshot } from "../scripts/lib/workspace-snapshot.mjs";
 
 const SESSION_ID = "019fa2c3-b7b8-7621-9d2a-75b93e1d97f7";
@@ -166,6 +171,68 @@ test("captures deterministic Git and checkpoint workspace evidence", async (t) =
     assert.match(snapshot.checkpoint.content, /Next: run tests/);
     assert.match(snapshot.sourceRevision, /^sha256:[0-9a-f]{64}$/);
     assert.ok(snapshot.evidenceEntries.length >= 8);
+  } finally {
+    await fs.promises.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("published output files do not invalidate their prepared workspace revision", async (t) => {
+  const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "codex-handoff-publication-snapshot-"));
+  try {
+    try {
+      childProcess.execFileSync("git", ["--version"], { windowsHide: true });
+    } catch {
+      t.skip("git is not available");
+      return;
+    }
+
+    childProcess.execFileSync("git", ["init"], { cwd: root, windowsHide: true });
+    childProcess.execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: root, windowsHide: true });
+    childProcess.execFileSync("git", ["config", "user.name", "Test User"], { cwd: root, windowsHide: true });
+    await fs.promises.writeFile(path.join(root, "tracked.txt"), "stable\n");
+    childProcess.execFileSync("git", ["add", "tracked.txt"], { cwd: root, windowsHide: true });
+    childProcess.execFileSync("git", ["commit", "-m", "initial"], { cwd: root, windowsHide: true });
+
+    const outputPath = path.join(root, "handoff.md");
+    const evidenceIndexPath = path.join(root, "handoff.evidence.json");
+    const rolloutPath = path.join(root, "rollout.jsonl");
+    await fs.promises.writeFile(rolloutPath, "{}\n");
+    const snapshot = await captureWorkspaceSnapshot(root, {
+      publicationOutputPaths: [
+        outputPath,
+        evidenceIndexPath,
+        path.join(root, "tracked.txt"),
+      ],
+    });
+    const statusEntry = snapshot.evidenceEntries.find((entry) => (
+      entry.anchor.payloadPath === "/git/branchAndStatus"
+    ));
+    assert.ok(statusEntry.locator.args.some((arg) => arg.includes("handoff.md")));
+    assert.ok(statusEntry.locator.args.some((arg) => arg.includes("handoff.evidence.json")));
+    assert.ok(!statusEntry.locator.args.some((arg) => arg.includes("tracked.txt")));
+    const source = await hashFileRevision(rolloutPath);
+    const index = buildEvidenceIndex({
+      sessionId: SESSION_ID,
+      source: { rolloutPath, ...source },
+      workspace: snapshot,
+      entries: snapshot.evidenceEntries,
+      preservationLedger: {
+        sourceRevision: source.sourceRevision,
+        requiredAnchors: [],
+        exactIdentifiers: [],
+        criticalCategories: [],
+      },
+    });
+
+    await fs.promises.writeFile(outputPath, "handoff\n");
+    await fs.promises.writeFile(evidenceIndexPath, "index\n");
+    assert.equal((await verifyEvidenceIndex(index)).valid, true);
+
+    await fs.promises.writeFile(path.join(root, "unrelated.txt"), "change\n");
+    await assert.rejects(
+      verifyEvidenceIndex(index),
+      { code: "WORKSPACE_CHANGED" },
+    );
   } finally {
     await fs.promises.rm(root, { recursive: true, force: true });
   }
