@@ -599,3 +599,13 @@
 
 **Entry point**: Start PT0 with the synthetic four-dispatch/three-slot production-boundary fixture; do not read or reuse `codex-handoff-task-RqGiDo` as test input.
 **Test**: ADR numbering is sequential through 0014; PT0-PT5 each contain Input/Produces/Does not do/Done when; no placeholders remain; local Markdown links pass 5/5 and R6 performance regressions pass 3/3.
+
+## 2026-08-10 Slice PT0 production-boundary characterization
+
+**Touched**:
+- `skills/export-codex-handoff/tests/fixtures/provider-timing-fixtures.mjs:PROVIDER_TIMING_PT0_FIXTURE / createProviderTimingDispatches / firstWaveProjectionInput` — freezes four synthetic dispatches, three fresh slots, accepted workflow durations `52/53/54`, zero calibration objects, `644844` ms prepare/frame elapsed time, unavailable capability state, and the three expected diagnostics.
+- `skills/export-codex-handoff/tests/provider-timing-pt0.test.mjs:PT0 integration tests` — drives the production dispatch factory, scheduler, performance projector, dynamic workflow export, and `validate-map --check` CLI parser without importing a missing export at module load or changing runtime behavior.
+- `docs/slice-plan-provider-timing-capability.md:Slice PT0` — records the fixture boundary and exact authentic-red plus regression-green evidence while leaving PT1-PT5 pending.
+
+**Entry point**: Run the PT0 Node test against the synthetic fixture; capability admission and `recordMapGenerationMetric` remain deliberately absent from production until PT2 and PT3.
+**Test**: `node --test --test-isolation=none skills/export-codex-handoff/tests/provider-timing-pt0.test.mjs` exits 1 with 2/4 passing; its only failures are the current three-dispatch/no-diagnostic admission result versus `PROVIDER_TIMING_UNAVAILABLE` with zero dispatches, and `recordMapGenerationMetric` being `undefined`. The unchanged R6/Worker/CLI command exits 0 with 14/14 passing; its sandbox run redirected only the allowlisted `TEMP`/`TMP` variables to the writable fixture directory for the pre-existing nested CLI subprocess. Test argv and runtime code were unchanged.

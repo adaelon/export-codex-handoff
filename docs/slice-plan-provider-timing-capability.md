@@ -1,6 +1,6 @@
 # Provider Timing Capability and Multi-Wave Recovery Slices
 
-Status: accepted; PT0-PT5 pending
+Status: accepted; PT0 ready for controller verification (authentic red); PT1-PT5 pending
 
 Scope: make multi-wave MAP scheduling fail before semantic work when trustworthy provider timing is unavailable, and consume dispatch-bound provider observations when the execution surface supports them.
 Decision: [ADR-0014 Provider Timing Capability for Multi-Wave MAP](./adr/0014-provider-timing-capability-for-multi-wave-map.md).
@@ -132,6 +132,12 @@ if dispatches remain:
 **Does not do**: inspect the retained Evidence Pack or MAP candidates, change runtime behavior, or encode Source Thread identifiers into fixtures.
 
 **Done when**: the fixture reproduces the empty-sample failure through the same exported functions and CLI boundary, existing R6 tests remain green, and the new tests fail only because the capability and post-worker ingress do not yet exist.
+
+**PT0 implementation evidence**: [provider-timing-fixtures.mjs](../skills/export-codex-handoff/tests/fixtures/provider-timing-fixtures.mjs) contains four synthetic `continuation-map-v2` dispatch definitions, three fresh slots, three accepted stages with workflow-owned check/complete/accept durations `52/53/54`, one pending stage, zero calibration objects, `644844` ms prepare/frame elapsed time, an unavailable capability observation, and only the three frozen diagnostics. [provider-timing-pt0.test.mjs](../skills/export-codex-handoff/tests/provider-timing-pt0.test.mjs) dynamically loads the production Worker, calibration, and workflow exports; validates/schedules the synthetic dispatches; reproduces `INCOMPLETE_FIRST_WAVE_METRICS: mapGenerationSamples must contain at least one duration`; exercises the production `validate-map --check` parser; and keeps the two future boundaries independently visible.
+
+**Exact red evidence**: `node --test --test-isolation=none skills/export-codex-handoff/tests/provider-timing-pt0.test.mjs` exits `1` with 4 tests: 2 pass and 2 fail. The only failures are (1) multi-wave admission returns three dispatches and no diagnostic instead of zero dispatches with `PROVIDER_TIMING_UNAVAILABLE`, and (2) the workflow export exposes `recordMapGenerationMetric` as `undefined` instead of a post-worker function. The empty-sample and production-CLI characterization tests pass.
+
+**Exact green evidence**: `node --test --test-isolation=none skills/export-codex-handoff/tests/continuation-grade-r6.test.mjs skills/export-codex-handoff/tests/map-worker.test.mjs skills/export-codex-handoff/tests/sparse-map-contract.test.mjs` exits `0` with 14/14 tests passing. In the managed Windows sandbox, this unchanged regression command used the allowlisted `TEMP`/`TMP` variables redirected to `skills/export-codex-handoff/tests/fixtures` so its pre-existing nested CLI subprocess could execute; the argv and production behavior were unchanged.
 
 ### Slice PT1: Pre-dispatch lower-bound gate
 
