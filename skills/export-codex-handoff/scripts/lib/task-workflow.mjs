@@ -13,6 +13,7 @@ export {
   prepareFrameStage,
   prepareReduceStage,
   publishHandoff,
+  recordMapGenerationMetric,
   validateFrameStage,
   validateMapStage,
 } from "./task-workflow-core.mjs";

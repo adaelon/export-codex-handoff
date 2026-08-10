@@ -1,6 +1,6 @@
 # Provider Timing Capability and Multi-Wave Recovery Slices
 
-Status: accepted; PT0 ready for controller verification (authentic red); PT1 ready for controller verification; PT2-PT5 pending
+Status: accepted; PT0-PT3 ready for controller verification; PT4-PT5 pending
 
 Scope: make multi-wave MAP scheduling fail before semantic work when trustworthy provider timing is unavailable, and consume dispatch-bound provider observations when the execution surface supports them.
 Decision: [ADR-0014 Provider Timing Capability for Multi-Wave MAP](./adr/0014-provider-timing-capability-for-multi-wave-map.md).
@@ -176,6 +176,10 @@ if dispatches remain:
 **Does not do**: accept arbitrary harness durations, reopen private evidence, mutate a MapReceipt, attach timing during Worker-side `--check`, or retrofit a frozen work directory.
 
 **Done when**: a valid provider observation records once; identical replay is stable; conflicting identity, source, duration, or configuration fails; no MAP candidate is read; and the accepted receipt digest remains unchanged.
+
+**PT3 implementation evidence**: [performance-calibration.mjs](../skills/export-codex-handoff/scripts/lib/performance-calibration.mjs) validates the exact nine-field, 2,048-byte `MapGenerationObservation` and rejects every non-provider source. [task-workflow-core.mjs](../skills/export-codex-handoff/scripts/lib/task-workflow-core.mjs) creates a `provider-observation-v1` manifest binding for new work directories and exports `recordMapGenerationMetric`, which reads only that manifest and the accepted MapReceipt, correlates the immutable dispatch/segment identity and execution configuration, binds the exact receipt bytes into a SHA-256 metric digest, persists additive `mapGenerationMetric` state, returns byte-stable identical replays, and fails closed on every conflict. It neither calls the private-summary validator nor reads `chunkPath`, `summaryPath`, `normalizedSummaryPath`, or `completedSummaryPath`; `checkMapDispatch` no longer accepts or persists timing. [export-handoff.mjs](../skills/export-codex-handoff/scripts/export-handoff.mjs) exposes the separate `record-map-metric <WORK_DIR> <SEGMENT_ID> <DISPATCH_ID> <OBSERVATION_FILE>` action with a bounded file read, while `validate-map --check` retains its independent parser and behavior.
+
+**PT3 exact verification evidence**: `node --test --test-isolation=none skills/export-codex-handoff/tests/provider-timing-pt0.test.mjs` exits `0` with 4/4 passing without changing the PT0 ingress assertion or permitting a provider-observation option on `--check`. `node --test --test-isolation=none skills/export-codex-handoff/tests/provider-timing-pt3.test.mjs skills/export-codex-handoff/tests/map-worker.test.mjs` exits `0` with 11/11 passing; PT3 covers exact shape and source validation, accepted-receipt ordering, no-private-candidate access, digest/replay stability, correlation and configuration conflicts, bounded CLI ingress, frozen-directory refusal, unchanged receipt bytes, and exact documentation residue.
 
 ### Slice PT4: Later-wave scheduling and terminal diagnostics
 

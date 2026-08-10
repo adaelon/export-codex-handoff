@@ -3,6 +3,7 @@ import { ExportHandoffError } from "./source-thread.mjs";
 export const LIVE_ACCEPTANCE_TARGET_MS = 600_000;
 export const PRE_DISPATCH_REDUCE_RESERVE_MS = 60_000;
 export const PRE_DISPATCH_PUBLICATION_RESERVE_MS = 20_000;
+export const MAP_GENERATION_OBSERVATION_MAX_BYTES = 2_048;
 
 const REPRESENTATIVE_SAMPLE_CLASSES = ["smallest", "median", "largest"];
 const CONFIG_FACTORS = ["model", "reasoningEffort", "slotCount"];
@@ -16,6 +17,18 @@ const PROVIDER_TIMING_UNAVAILABLE_REASONS = new Set([
   "not_exposed",
   "not_correlatable",
 ]);
+const MAP_GENERATION_OBSERVATION_FIELDS = [
+  "providerObservationId",
+  "dispatchId",
+  "segmentId",
+  "providerLatencyMs",
+  "source",
+  "model",
+  "reasoningEffort",
+  "wave",
+  "availableSlots",
+];
+const MAP_GENERATION_OBSERVATION_STRING_MAX_CHARS = 256;
 const UTC_PHASE_BOUNDARY_PATTERN =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?Z$/;
 
@@ -29,6 +42,17 @@ function requireObject(value, label, code = "INVALID_CALIBRATION_RUN") {
 function requireString(value, label, code = "INVALID_CALIBRATION_RUN") {
   if (typeof value !== "string" || !value.trim()) {
     throw new ExportHandoffError(code, `${label} must be a non-empty string`);
+  }
+  return value;
+}
+
+function requireBoundedString(value, label, code) {
+  requireString(value, label, code);
+  if (value.length > MAP_GENERATION_OBSERVATION_STRING_MAX_CHARS) {
+    throw new ExportHandoffError(
+      code,
+      `${label} must be at most ${MAP_GENERATION_OBSERVATION_STRING_MAX_CHARS} characters`,
+    );
   }
   return value;
 }
@@ -127,6 +151,86 @@ export function validateProviderTimingCapability(capability) {
     observationPoint: capability.observationPoint,
     reasonCode: capability.reasonCode,
   };
+}
+
+export function validateMapGenerationObservation(observation) {
+  requireObject(
+    observation,
+    "MapGenerationObservation",
+    "INVALID_MAP_GENERATION_OBSERVATION",
+  );
+  const keys = Object.keys(observation);
+  if (
+    keys.length !== MAP_GENERATION_OBSERVATION_FIELDS.length ||
+    MAP_GENERATION_OBSERVATION_FIELDS.some((field) => !keys.includes(field))
+  ) {
+    throw new ExportHandoffError(
+      "INVALID_MAP_GENERATION_OBSERVATION",
+      `MapGenerationObservation fields must be exactly ${MAP_GENERATION_OBSERVATION_FIELDS.join(", ")}`,
+    );
+  }
+  requireBoundedString(
+    observation.providerObservationId,
+    "providerObservationId",
+    "INVALID_MAP_GENERATION_OBSERVATION",
+  );
+  requireBoundedString(
+    observation.dispatchId,
+    "dispatchId",
+    "INVALID_MAP_GENERATION_OBSERVATION",
+  );
+  requireBoundedString(
+    observation.segmentId,
+    "segmentId",
+    "INVALID_MAP_GENERATION_OBSERVATION",
+  );
+  requireNonNegativeDuration(
+    observation.providerLatencyMs,
+    "providerLatencyMs",
+    "INVALID_MAP_GENERATION_OBSERVATION",
+  );
+  validateProviderSource(observation.source, "MapGenerationObservation source");
+  requireBoundedString(
+    observation.model,
+    "model",
+    "INVALID_MAP_GENERATION_OBSERVATION",
+  );
+  requireBoundedString(
+    observation.reasoningEffort,
+    "reasoningEffort",
+    "INVALID_MAP_GENERATION_OBSERVATION",
+  );
+  requirePositiveInteger(
+    observation.wave,
+    "wave",
+    "INVALID_MAP_GENERATION_OBSERVATION",
+  );
+  requirePositiveInteger(
+    observation.availableSlots,
+    "availableSlots",
+    "INVALID_MAP_GENERATION_OBSERVATION",
+  );
+  const validated = {
+    providerObservationId: observation.providerObservationId,
+    dispatchId: observation.dispatchId,
+    segmentId: observation.segmentId,
+    providerLatencyMs: observation.providerLatencyMs,
+    source: "provider",
+    model: observation.model,
+    reasoningEffort: observation.reasoningEffort,
+    wave: observation.wave,
+    availableSlots: observation.availableSlots,
+  };
+  if (
+    Buffer.byteLength(JSON.stringify(validated), "utf8") >
+    MAP_GENERATION_OBSERVATION_MAX_BYTES
+  ) {
+    throw new ExportHandoffError(
+      "INVALID_MAP_GENERATION_OBSERVATION",
+      `MapGenerationObservation exceeds ${MAP_GENERATION_OBSERVATION_MAX_BYTES} bytes`,
+    );
+  }
+  return validated;
 }
 
 export function validateMapGenerationMetric(metric) {

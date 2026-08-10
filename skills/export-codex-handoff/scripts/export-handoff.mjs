@@ -1,9 +1,13 @@
 #!/usr/bin/env node
 
+import fs from "node:fs";
+
 import {
   retrieveEvidenceFromFile,
   verifyEvidenceIndexFile,
 } from "./lib/evidence-index.mjs";
+import { MAP_GENERATION_OBSERVATION_MAX_BYTES } from "./lib/performance-calibration.mjs";
+import { ExportHandoffError } from "./lib/source-thread.mjs";
 import {
   acceptMapReceipt,
   checkMapDispatch,
@@ -14,6 +18,7 @@ import {
   prepareFrameStage,
   prepareReduceStage,
   publishHandoff,
+  recordMapGenerationMetric,
   validateFrameStage,
   validateMapStage,
 } from "./lib/task-workflow.mjs";
@@ -24,6 +29,7 @@ function usage() {
   node export-handoff.mjs prepare-frame <WORK_DIR>
   node export-handoff.mjs validate-frame <WORK_DIR>
   node export-handoff.mjs validate-map <WORK_DIR> <SEGMENT_ID> [--claim <DISPATCH_ID> --worker <WORKER_ID> | --check <DISPATCH_ID> | --complete <DISPATCH_ID> | --accept <DISPATCH_ID>]
+  node export-handoff.mjs record-map-metric <WORK_DIR> <SEGMENT_ID> <DISPATCH_ID> <OBSERVATION_FILE>
   node export-handoff.mjs prepare-reduce <WORK_DIR>
   node export-handoff.mjs validate-reduce <WORK_DIR> --check
   node export-handoff.mjs publish <WORK_DIR> [--keep-workdir]
@@ -121,6 +127,52 @@ function parseMapWorkerAction(args) {
   throw new Error(`Unknown option: ${args[2]}`);
 }
 
+function parseMapMetricAction(args) {
+  if (args.length !== 4) {
+    throw new Error(
+      "record-map-metric requires WORK_DIR SEGMENT_ID DISPATCH_ID OBSERVATION_FILE",
+    );
+  }
+  return {
+    workDir: requirePositional(args, 0, "WORK_DIR"),
+    segmentId: requirePositional(args, 1, "SEGMENT_ID"),
+    dispatchId: requirePositional(args, 2, "DISPATCH_ID"),
+    observationPath: requirePositional(args, 3, "OBSERVATION_FILE"),
+  };
+}
+
+async function readBoundedObservationDocument(target) {
+  const handle = await fs.promises.open(target, "r");
+  try {
+    const buffer = Buffer.alloc(MAP_GENERATION_OBSERVATION_MAX_BYTES + 1);
+    const { bytesRead } = await handle.read(
+      buffer,
+      0,
+      buffer.length,
+      0,
+    );
+    if (bytesRead > MAP_GENERATION_OBSERVATION_MAX_BYTES) {
+      throw new ExportHandoffError(
+        "MAP_GENERATION_OBSERVATION_TOO_LARGE",
+        `Provider observation document exceeds ${MAP_GENERATION_OBSERVATION_MAX_BYTES} bytes`,
+      );
+    }
+    try {
+      return JSON.parse(buffer.subarray(0, bytesRead).toString("utf8"));
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        throw new ExportHandoffError(
+          "INVALID_MAP_GENERATION_OBSERVATION_DOCUMENT",
+          "Provider observation document must contain exactly one JSON value",
+        );
+      }
+      throw error;
+    }
+  } finally {
+    await handle.close();
+  }
+}
+
 async function dispatch(command, args) {
   if (command === "prepare") return prepareCompressionTask(parsePrepare(args));
   if (command === "prepare-frame") {
@@ -149,6 +201,16 @@ async function dispatch(command, args) {
       return acceptMapReceipt(action.workDir, action.segmentId, action.dispatchId);
     }
     return validateMapStage(action.workDir, action.segmentId);
+  }
+  if (command === "record-map-metric") {
+    const action = parseMapMetricAction(args);
+    const observation = await readBoundedObservationDocument(action.observationPath);
+    return recordMapGenerationMetric(
+      action.workDir,
+      action.segmentId,
+      action.dispatchId,
+      observation,
+    );
   }
   if (command === "prepare-reduce") {
     return prepareReduceStage(requirePositional(args, 0, "WORK_DIR"));

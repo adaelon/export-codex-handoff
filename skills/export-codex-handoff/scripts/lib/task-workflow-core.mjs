@@ -59,7 +59,7 @@ import { validateProgressEvidence } from "./progress-evidence.mjs";
 import {
   buildPerformanceMetrics,
   projectPreDispatchLowerBound,
-  validateMapGenerationMetric,
+  validateMapGenerationObservation,
   validateReduceGenerationMetric,
 } from "./performance-calibration.mjs";
 import { renderHandoff } from "./render-handoff.mjs";
@@ -81,6 +81,15 @@ const DETERMINISTIC_PARENT_COVERAGE_MODE = "deterministic-parent-coverage-v1";
 const MAX_CONTINUATION_REDUCE_INPUT_CHARS = 300_000;
 const TERMINAL_AUTHORITY_FRAME_VERSION = 2;
 const ACTION_READY_PROGRESS_STAGE = "progress_map";
+const MAP_GENERATION_METRIC_MODE = "provider-observation-v1";
+const MAP_GENERATION_METRIC_KIND = "codex-handoff-map-generation-metric";
+const MAP_GENERATION_METRIC_FORMAT_VERSION = 1;
+const MAP_GENERATION_METRIC_STATE_FIELDS = [
+  "observation",
+  "receiptDigest",
+  "metricDigest",
+];
+const SHA256_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
 
 const ACTION_READY_OUTPUT_CONTRACT = Object.freeze({
   formatVersion: 1,
@@ -107,13 +116,16 @@ function workflowPerformanceState(manifest) {
     stages: [
       ...(manifest.segments || []),
       ...(manifest.turnAggregates || []),
-    ].filter((stage) => stage.dispatch).map((stage) => ({
-      wave: stage.calibration?.wave,
-      providerMapGenerationMs: stage.calibration?.providerLatencyMs,
-      checkDurationMs: stage.checkDurationMs,
-      completeDurationMs: stage.completeDurationMs,
-      acceptDurationMs: stage.acceptDurationMs,
-    })),
+    ].filter((stage) => stage.dispatch).map((stage) => {
+      const observation = stage.mapGenerationMetric?.observation || stage.calibration;
+      return {
+        wave: observation?.wave,
+        providerMapGenerationMs: observation?.providerLatencyMs,
+        checkDurationMs: stage.checkDurationMs,
+        completeDurationMs: stage.completeDurationMs,
+        acceptDurationMs: stage.acceptDurationMs,
+      };
+    }),
     reduceGenerationMs: manifest.reduceCalibration?.providerLatencyMs,
     reducePrepareDurationMs: manifest.reducePrepareDurationMs,
     reduceCheckDurationMs: manifest.reduceCheckDurationMs,
@@ -537,8 +549,24 @@ async function loadManifest(workDir) {
   const manifest = await readJson(path.join(resolved, MANIFEST_FILE), "Compression Task manifest");
   assertManagedWorkDir(manifest, resolved);
   await assertWorkflowVersionBinding(manifest, resolved);
+  if (
+    Object.hasOwn(manifest, "mapGenerationMetricMode") &&
+    manifest.mapGenerationMetricMode !== MAP_GENERATION_METRIC_MODE
+  ) {
+    workflowVersionMismatch(
+      `Unsupported MAP generation metric mode ${manifest.mapGenerationMetricMode}`,
+    );
+  }
   assertMapOutputBudgetPlan(manifest);
   for (const segment of manifest.segments || []) {
+    if (
+      segment.mapGenerationMetric &&
+      manifest.mapGenerationMetricMode !== MAP_GENERATION_METRIC_MODE
+    ) {
+      workflowVersionMismatch(
+        `${segment.segmentId} has provider-observation state without its workflow binding`,
+      );
+    }
     assertInsideWorkDir(resolved, segment.chunkPath, "Segment path");
     assertInsideWorkDir(resolved, segment.summaryPath, "Summary path");
     if (segment.normalizedSummaryPath) {
@@ -572,6 +600,14 @@ async function loadManifest(workDir) {
     }
   }
   for (const aggregate of manifest.turnAggregates || []) {
+    if (
+      aggregate.mapGenerationMetric &&
+      manifest.mapGenerationMetricMode !== MAP_GENERATION_METRIC_MODE
+    ) {
+      workflowVersionMismatch(
+        `${aggregate.segmentId} has provider-observation state without its workflow binding`,
+      );
+    }
     assertInsideWorkDir(resolved, aggregate.chunkPath, "Turn aggregate path");
     assertInsideWorkDir(resolved, aggregate.summaryPath, "Turn aggregate summary path");
     if (aggregate.normalizedSummaryPath) {
@@ -601,6 +637,26 @@ async function loadManifest(workDir) {
   }
   for (const [label, target] of Object.entries(manifest.paths || {})) {
     assertInsideWorkDir(resolved, target, label);
+  }
+  return manifest;
+}
+
+async function loadMapGenerationMetricManifest(workDir) {
+  const resolved = path.resolve(workDir);
+  const manifest = await readJson(
+    path.join(resolved, MANIFEST_FILE),
+    "Compression Task manifest",
+  );
+  assertManagedWorkDir(manifest, resolved);
+  if (
+    manifest.formatVersion !== CURRENT_WORKFLOW_VERSION ||
+    manifest.kind !== "codex-handoff-compression-task" ||
+    !Array.isArray(manifest.segments) ||
+    !Array.isArray(manifest.turnAggregates)
+  ) {
+    workflowVersionMismatch(
+      "Post-worker provider observations require a valid v2 Compression Task manifest",
+    );
   }
   return manifest;
 }
@@ -1585,6 +1641,7 @@ export async function prepareCompressionTask(options, dependencies = {}) {
       mapResultMode,
       mapContextMode: REFERENCE_FRAME_PROJECTION_MODE,
       parentCoverageMode: DETERMINISTIC_PARENT_COVERAGE_MODE,
+      mapGenerationMetricMode: MAP_GENERATION_METRIC_MODE,
       ...(frameContractVersion ? { frameContractVersion } : {}),
       expectedTurnIds: evidencePack.turns.map((turn) => turn.turnId),
       sourceChars: evidencePack.source.sourceChars,
@@ -2009,7 +2066,6 @@ export async function checkMapDispatch(
   workDir,
   segmentId,
   dispatchId,
-  calibration = undefined,
 ) {
   const startedAtMs = Date.now();
   const manifest = await loadManifest(workDir);
@@ -2051,9 +2107,6 @@ export async function checkMapDispatch(
   }
 
   const checked = await validateWorkerSummary(stage, frozenFrame);
-  if (calibration !== undefined) {
-    stage.calibration = validateMapGenerationMetric(calibration);
-  }
   stage.checkDurationMs = durationSince(startedAtMs);
   stage.checkedSummaryDigest = checked.summaryDigest;
   stage.summaryCheckedAt = new Date().toISOString();
@@ -2064,7 +2117,6 @@ export async function checkMapDispatch(
     segmentId,
     summaryDigest: checked.summaryDigest,
     checkDurationMs: stage.checkDurationMs,
-    ...(stage.calibration ? { calibration: stage.calibration } : {}),
     ...(stage.dispatch.maxMapOutputChars
       ? { rawMapOutputChars: checked.rawMapOutputChars }
       : {}),
@@ -2274,6 +2326,239 @@ export async function acceptMapReceipt(workDir, segmentId, dispatchId) {
     acceptDurationMs: stage.acceptDurationMs,
     nextDispatch,
   };
+}
+
+function mapGenerationMetricDigest(dispatch, receiptDigest, observation) {
+  return `sha256:${sha256Text(canonicalStringify({
+    kind: MAP_GENERATION_METRIC_KIND,
+    formatVersion: MAP_GENERATION_METRIC_FORMAT_VERSION,
+    dispatch,
+    receiptDigest,
+    observation,
+  }))}`;
+}
+
+function validateMapGenerationMetricState(state, stage) {
+  if (!state || typeof state !== "object" || Array.isArray(state)) {
+    throw new ExportHandoffError(
+      "MAP_GENERATION_METRIC_INTEGRITY_MISMATCH",
+      `${stage.segmentId} MAP generation metric state must be an object`,
+    );
+  }
+  const keys = Object.keys(state);
+  if (
+    keys.length !== MAP_GENERATION_METRIC_STATE_FIELDS.length ||
+    MAP_GENERATION_METRIC_STATE_FIELDS.some((field) => !keys.includes(field))
+  ) {
+    throw new ExportHandoffError(
+      "MAP_GENERATION_METRIC_INTEGRITY_MISMATCH",
+      `${stage.segmentId} MAP generation metric state has an invalid shape`,
+    );
+  }
+  const observation = validateMapGenerationObservation(state.observation);
+  if (
+    observation.dispatchId !== stage.dispatch?.dispatchId ||
+    observation.segmentId !== stage.segmentId
+  ) {
+    throw new ExportHandoffError(
+      "MAP_GENERATION_METRIC_INTEGRITY_MISMATCH",
+      `${stage.segmentId} MAP generation metric is not bound to its immutable dispatch`,
+    );
+  }
+  if (
+    !SHA256_DIGEST_PATTERN.test(state.receiptDigest) ||
+    !SHA256_DIGEST_PATTERN.test(state.metricDigest)
+  ) {
+    throw new ExportHandoffError(
+      "MAP_GENERATION_METRIC_INTEGRITY_MISMATCH",
+      `${stage.segmentId} MAP generation metric digests are malformed`,
+    );
+  }
+  const expectedMetricDigest = mapGenerationMetricDigest(
+    stage.dispatch,
+    state.receiptDigest,
+    observation,
+  );
+  if (state.metricDigest !== expectedMetricDigest) {
+    throw new ExportHandoffError(
+      "MAP_GENERATION_METRIC_INTEGRITY_MISMATCH",
+      `${stage.segmentId} MAP generation metric digest does not match its integrity state`,
+    );
+  }
+  return {
+    observation,
+    receiptDigest: state.receiptDigest,
+    metricDigest: state.metricDigest,
+  };
+}
+
+function validateAcceptedReceiptMetadata(stage, receipt) {
+  if (
+    !stage.receiptAcceptedAt ||
+    stage.workerStatus !== "validated" ||
+    receipt.status !== "validated"
+  ) {
+    throw new ExportHandoffError(
+      "MAP_RECEIPT_NOT_ACCEPTED",
+      `${stage.segmentId} requires an accepted validated MapReceipt before provider timing can be recorded`,
+    );
+  }
+  for (const field of [
+    "summaryDigest",
+    "normalizedSummaryDigest",
+    "completedSummaryDigest",
+    "rawMapOutputChars",
+    "normalizedMapOutputChars",
+    "completedMapOutputChars",
+  ]) {
+    if (Object.hasOwn(stage, field) && stage[field] !== receipt[field]) {
+      throw new ExportHandoffError(
+        "MAP_RECEIPT_INTEGRITY_MISMATCH",
+        `${stage.segmentId} accepted receipt metadata changed at ${field}`,
+      );
+    }
+  }
+}
+
+function validateObservationCorrelation(manifest, stage, observation) {
+  if (
+    observation.dispatchId !== stage.dispatch.dispatchId ||
+    observation.segmentId !== stage.segmentId
+  ) {
+    throw new ExportHandoffError(
+      "MAP_GENERATION_OBSERVATION_MISMATCH",
+      "MapGenerationObservation dispatchId and segmentId must match the immutable MapDispatch",
+    );
+  }
+  let observationsInWave = 0;
+  for (const candidate of [
+    ...(manifest.segments || []),
+    ...(manifest.turnAggregates || []),
+  ]) {
+    if (!candidate.mapGenerationMetric || candidate === stage) continue;
+    validateMapDispatch(candidate.dispatch, {
+      segmentId: candidate.segmentId,
+      ...(manifest.frameDigest ? { frameDigest: manifest.frameDigest } : {}),
+      ...(candidate.contextDigest ? { contextDigest: candidate.contextDigest } : {}),
+      ...(candidate.dictionaryDigest
+        ? { dictionaryDigest: candidate.dictionaryDigest }
+        : {}),
+      mapResultMode: manifest.mapResultMode,
+    });
+    const existing = validateMapGenerationMetricState(
+      candidate.mapGenerationMetric,
+      candidate,
+    ).observation;
+    if (existing.providerObservationId === observation.providerObservationId) {
+      throw new ExportHandoffError(
+        "MAP_GENERATION_OBSERVATION_MISMATCH",
+        `${observation.providerObservationId} is already bound to another MapDispatch`,
+      );
+    }
+    if (
+      existing.model !== observation.model ||
+      existing.reasoningEffort !== observation.reasoningEffort
+    ) {
+      throw new ExportHandoffError(
+        "MAP_GENERATION_OBSERVATION_MISMATCH",
+        "Provider model and reasoning effort must correlate across one Compression Run",
+      );
+    }
+    if (existing.wave === observation.wave) {
+      observationsInWave += 1;
+      if (existing.availableSlots !== observation.availableSlots) {
+        throw new ExportHandoffError(
+          "MAP_GENERATION_OBSERVATION_MISMATCH",
+          "Provider observations in one wave must bind the same fresh availableSlots count",
+        );
+      }
+    }
+  }
+  if (observationsInWave + 1 > observation.availableSlots) {
+    throw new ExportHandoffError(
+      "MAP_GENERATION_OBSERVATION_MISMATCH",
+      "A provider-observation wave cannot contain more dispatches than its fresh availableSlots count",
+    );
+  }
+}
+
+export async function recordMapGenerationMetric(
+  workDir,
+  segmentId,
+  dispatchId,
+  observation,
+) {
+  const manifest = await loadMapGenerationMetricManifest(workDir);
+  if (manifest.mapGenerationMetricMode !== MAP_GENERATION_METRIC_MODE) {
+    throw new ExportHandoffError(
+      "PROVIDER_TIMING_INGRESS_UNAVAILABLE",
+      "This work directory predates the post-worker provider-observation binding and will not be retrofitted",
+    );
+  }
+  const stage = findMapStage(manifest, segmentId);
+  if (!stage) {
+    throw new ExportHandoffError("UNKNOWN_SEGMENT", `Unknown segment: ${segmentId}`);
+  }
+  if (!stage.dispatch) {
+    throw new ExportHandoffError("MAP_DISPATCH_MISSING", `${segmentId} has no MAP dispatch`);
+  }
+  assertInsideWorkDir(manifest.workDir, stage.receiptPath, "Accepted MAP receipt path");
+  validateMapDispatch(stage.dispatch, {
+    dispatchId,
+    segmentId,
+    ...(manifest.frameDigest ? { frameDigest: manifest.frameDigest } : {}),
+    ...(stage.contextDigest ? { contextDigest: stage.contextDigest } : {}),
+    ...(stage.dictionaryDigest ? { dictionaryDigest: stage.dictionaryDigest } : {}),
+    mapResultMode: manifest.mapResultMode,
+  });
+  const validatedObservation = validateMapGenerationObservation(observation);
+  validateObservationCorrelation(manifest, stage, validatedObservation);
+  if (!stage.receiptAcceptedAt || stage.workerStatus !== "validated") {
+    throw new ExportHandoffError(
+      "MAP_RECEIPT_NOT_ACCEPTED",
+      `${segmentId} requires an accepted validated MapReceipt before provider timing can be recorded`,
+    );
+  }
+
+  const receiptDocument = await readJsonDocument(
+    stage.receiptPath,
+    `${segmentId} accepted MAP receipt`,
+  );
+  validateMapReceipt(receiptDocument.value, stage.dispatch);
+  validateAcceptedReceiptMetadata(stage, receiptDocument.value);
+  const receiptDigest = `sha256:${sha256Text(receiptDocument.text)}`;
+  const metricDigest = mapGenerationMetricDigest(
+    stage.dispatch,
+    receiptDigest,
+    validatedObservation,
+  );
+  if (stage.mapGenerationMetric) {
+    const existing = validateMapGenerationMetricState(
+      stage.mapGenerationMetric,
+      stage,
+    );
+    if (existing.receiptDigest !== receiptDigest) {
+      throw new ExportHandoffError(
+        "MAP_RECEIPT_INTEGRITY_MISMATCH",
+        `${segmentId} accepted MapReceipt changed after its provider metric was recorded`,
+      );
+    }
+    if (existing.metricDigest !== metricDigest) {
+      throw new ExportHandoffError(
+        "MAP_GENERATION_METRIC_CONFLICT",
+        `${segmentId} already has a different provider observation`,
+      );
+    }
+    return { recorded: true, metricDigest };
+  }
+
+  stage.mapGenerationMetric = {
+    observation: validatedObservation,
+    receiptDigest,
+    metricDigest,
+  };
+  await writeManifest(manifest);
+  return { recorded: true, metricDigest };
 }
 
 export async function validateMapStage(workDir, segmentId) {

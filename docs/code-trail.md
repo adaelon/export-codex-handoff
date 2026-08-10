@@ -632,3 +632,18 @@
 
 **Entry point**: After a caller freshly observes dedicated capacity, it passes the pending MapDispatches, that slot count, and—only for structural multi-wave work—the execution-surface capability to `scheduleMapDispatches` before creating Workers or claiming dispatches.
 **Test**: PT2 passes 3/3; the exact R6/Worker/Compression regression command passes 23/23 with only allowlisted `TEMP`/`TMP` redirected to the writable fixture directory for its existing nested CLI subprocess.
+
+## 2026-08-10 Slice PT3 post-worker provider-observation ingress
+
+**Touched**:
+- `skills/export-codex-handoff/scripts/lib/performance-calibration.mjs:validateMapGenerationObservation` — validates exactly nine bounded correlation fields and admits only provider-reported latency.
+- `skills/export-codex-handoff/scripts/lib/task-workflow-core.mjs:recordMapGenerationMetric` — requires a new-workdir ingress binding and accepted receipt, then persists receipt-bound additive metric integrity state without reading a private MAP candidate.
+- `skills/export-codex-handoff/scripts/lib/task-workflow-core.mjs:checkMapDispatch` — keeps Worker-side checking independent by removing the optional timing attachment path.
+- `skills/export-codex-handoff/scripts/export-handoff.mjs:record-map-metric` — reads one observation document through a 2,048-byte production CLI boundary after Worker completion.
+- `skills/export-codex-handoff/tests/fixtures/provider-timing-fixtures.mjs:PROVIDER_TIMING_PT3_FIXTURE / createMapGenerationObservation` — freezes valid observation data, manifest mode, and deterministic PT3 diagnostics without private evidence.
+- `skills/export-codex-handoff/tests/provider-timing-pt0.test.mjs:empty-sample characterization` — supplies the already-implemented available capability so the authentic empty-sample and independent-ingress assertions both remain green.
+- `skills/export-codex-handoff/tests/provider-timing-pt3.test.mjs:PT3 acceptance tests` — cover exact validation, accepted ordering, private-candidate deletion, digest/replay stability, conflicts, bounded CLI ingress, frozen-directory refusal, and exact documentation residue.
+- `docs/slice-plan-provider-timing-capability.md:Slice PT3` and `docs/architecture.md:post-worker provider-observation ingress` — record the implemented host boundary and leave later-wave consumption to PT4.
+
+**Entry point**: After `validate-map --accept`, write the exact provider document and run `record-map-metric <WORK_DIR> <SEGMENT_ID> <DISPATCH_ID> <OBSERVATION_FILE>`; never attach timing to `validate-map --check`.
+**Test**: PT0 passes 4/4; PT3 plus MAP Worker passes 11/11, including identical replay with unchanged manifest bytes and accepted receipt digest after every successful or rejected ingress.

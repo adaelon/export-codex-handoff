@@ -7,6 +7,7 @@ import { Worker } from "node:worker_threads";
 
 import {
   PROVIDER_TIMING_PT0_FIXTURE,
+  PROVIDER_TIMING_PT2_FIXTURE,
   createProviderTimingDispatches,
   firstWaveProjectionInput,
 } from "./fixtures/provider-timing-fixtures.mjs";
@@ -77,6 +78,10 @@ test("PT0 synthetic fixture reproduces the production empty-sample boundary", as
   const scheduled = mapWorker.scheduleMapDispatches(
     dispatches,
     PROVIDER_TIMING_PT0_FIXTURE.freshSlots,
+    {
+      providerTimingCapability:
+        PROVIDER_TIMING_PT2_FIXTURE.availableProviderTimingCapability,
+    },
   );
   assert.equal(scheduled.status, "ready");
   assert.equal(scheduled.availableSlots, 3);

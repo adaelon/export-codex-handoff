@@ -224,6 +224,14 @@ anchors, and freezes the exact serialized digest. Publication refuses an uncheck
 candidate. Terminal `prepare-reduce`, `validate-reduce`, and `publish` errors retain a bounded
 `failure-report.json` with diagnostics, phase timings, Worker metrics, and the managed workdir.
 
+The post-worker provider-observation ingress is a host/coordinator boundary, not a MAP Worker
+validation mode. New work directories carry a `provider-observation-v1` manifest binding. After the
+coordinator accepts a MapReceipt, `recordMapGenerationMetric` validates one bounded provider document,
+correlates it with the immutable MapDispatch and same-wave execution configuration, and adds a
+receipt-bound SHA-256 metric state to the manifest. It reads no chunk, raw/normalized/completed MAP
+candidate, Frame Projection, or Evidence Reference Dictionary; identical replay returns the same
+digest without rewriting state, while correlation, receipt, or replay conflicts fail closed.
+
 The v2 publisher validates the Handoff budget, Evidence Index budget, coverage graph, frozen frame,
 source-revision binding, and live Source Thread revision before either output is visible. Sparse,
 missing-mode, and `continuation-map-v1` routes retain the legacy renderer. `continuation-map-v2`
@@ -278,8 +286,14 @@ Source Thread UUID
   -> non-consuming structure/output check -> immutable candidate digest
   -> [sparse] deterministic expansion -> digest-bound normalized full-MAP summary
   -> [continuation] local-reference resolution -> digest-bound compact Claim table
-  -> bounded MapReceipt with raw + normalized/completed digests and sizes -> coordinator
-  -> provider MAP-generation observation + workflow check/complete/accept observation
+  -> bounded MapReceipt with raw + normalized/completed digests and sizes -> coordinator accepts
+  -> accepted MapReceipt metadata + immutable MapDispatch identity
+  -> record-map-metric <WORK_DIR> <SEGMENT_ID> <DISPATCH_ID> <OBSERVATION_FILE>
+       -> exact bounded provider-only MapGenerationObservation validation
+       -> dispatch/segment + model/reasoning/wave/fresh-slot correlation
+       -> receipt-bound SHA-256 metric digest -> additive manifest integrity state
+       -> identical replay: stable; conflict/mismatch: fail closed without receipt mutation
+  -> workflow-owned check/complete/accept observation remains separate from provider latency
   -> first-wave conservative projection
        -> <=600000ms: dispatch next wave within freshly observed slots
        -> >600000ms: fail fast with LIVE_BUDGET_UNREACHABLE
@@ -339,5 +353,6 @@ re-runs an indexed workspace observation and fails closed if its source revision
 - **Implemented coordinator-isolated sparse expansion**: [Worker-bound Sparse MAP Expansion](./adr/0010-worker-bound-sparse-map-expansion.md)
 - **Implemented retrieval/critical-coverage separation**: [Continuation-Grade Evidence Compression](./adr/0011-continuation-grade-evidence-compression.md)
 - **Action-ready Hot/Cold boundary and staged v2 route**: [Action-Ready Handoff Hot/Cold Boundary](./adr/0013-action-ready-handoff-hot-cold-boundary.md)
+- **Provider-observation admission and persistence boundary**: [Provider Timing Capability for Multi-Wave MAP](./adr/0014-provider-timing-capability-for-multi-wave-map.md)
 
 - **Implemented version routing and transactional publication**: [Evidence-preserving compression slice plan](./slice-plan-evidence-preserving-compression.md#slice-6-transactional-publication-compatibility-and-end-to-end-evaluation)

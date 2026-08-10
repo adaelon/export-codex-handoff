@@ -106,6 +106,49 @@ export const PROVIDER_TIMING_PT2_FIXTURE = Object.freeze({
   }),
 });
 
+export const PROVIDER_TIMING_PT3_FIXTURE = Object.freeze({
+  mapGenerationMetricMode: "provider-observation-v1",
+  observation: Object.freeze({
+    providerObservationId: "provider-observation-pt3-001",
+    providerLatencyMs: 12_345,
+    source: "provider",
+    model: "configured-worker-model",
+    reasoningEffort: "high",
+    wave: 1,
+    availableSlots: PROVIDER_TIMING_PT0_FIXTURE.freshSlots,
+  }),
+  diagnostics: Object.freeze({
+    invalidObservation: "INVALID_MAP_GENERATION_OBSERVATION",
+    correlationMismatch: "MAP_GENERATION_OBSERVATION_MISMATCH",
+    conflictingReplay: "MAP_GENERATION_METRIC_CONFLICT",
+    receiptNotAccepted: "MAP_RECEIPT_NOT_ACCEPTED",
+    ingressUnavailable: "PROVIDER_TIMING_INGRESS_UNAVAILABLE",
+    oversizedDocument: "MAP_GENERATION_OBSERVATION_TOO_LARGE",
+  }),
+});
+
+export function createMapGenerationObservation(dispatch, overrides = {}) {
+  if (!dispatch || typeof dispatch !== "object") {
+    throw new TypeError("dispatch must be a production MapDispatch");
+  }
+  return {
+    providerObservationId:
+      PROVIDER_TIMING_PT3_FIXTURE.observation.providerObservationId,
+    dispatchId: dispatch.dispatchId,
+    segmentId: dispatch.segmentId,
+    providerLatencyMs:
+      PROVIDER_TIMING_PT3_FIXTURE.observation.providerLatencyMs,
+    source: PROVIDER_TIMING_PT3_FIXTURE.observation.source,
+    model: PROVIDER_TIMING_PT3_FIXTURE.observation.model,
+    reasoningEffort:
+      PROVIDER_TIMING_PT3_FIXTURE.observation.reasoningEffort,
+    wave: PROVIDER_TIMING_PT3_FIXTURE.observation.wave,
+    availableSlots:
+      PROVIDER_TIMING_PT3_FIXTURE.observation.availableSlots,
+    ...overrides,
+  };
+}
+
 export function createProviderTimingDispatches(createMapDispatch) {
   if (typeof createMapDispatch !== "function") {
     throw new TypeError("createMapDispatch must be the production dispatch factory");
