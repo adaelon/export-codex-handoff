@@ -589,3 +589,13 @@
 
 **Entry point**: Prepare and publish a Handoff inside the Source Thread Git worktree, then run `verify-evidence` without moving either public artifact.
 **Test**: Evidence Pack and Compression focused regressions pass 18/18; the complete repository suite passes 154/154.
+
+## 2026-08-10 Provider Timing Capability and multi-wave recovery design
+
+**Touched**:
+- `CONTEXT.md:Provider Timing Capability` — names the execution-surface guarantee without conflating provider latency with coordinator or harness elapsed time.
+- `docs/adr/0014-provider-timing-capability-for-multi-wave-map.md:Decision` — requires capability preflight before a structurally multi-wave run and a post-worker, dispatch-bound observation ingress.
+- `docs/slice-plan-provider-timing-capability.md:PT0-PT5` — orders characterization, pre-dispatch lower-bound rejection, capability admission, metric persistence, later-wave scheduling, packaging, and live acceptance.
+
+**Entry point**: Start PT0 with the synthetic four-dispatch/three-slot production-boundary fixture; do not read or reuse `codex-handoff-task-RqGiDo` as test input.
+**Test**: ADR numbering is sequential through 0014; PT0-PT5 each contain Input/Produces/Does not do/Done when; no placeholders remain; local Markdown links pass 5/5 and R6 performance regressions pass 3/3.

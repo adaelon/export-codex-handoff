@@ -84,6 +84,10 @@ _Avoid_: Segment descriptor, worker prompt
 A bounded validation outcome that binds one MapDispatch to either an immutable summary digest or one diagnostic code, without returning raw segment evidence.
 _Avoid_: MAP result, worker transcript
 
+**Provider Timing Capability**:
+An execution-surface guarantee that provider-reported MAP generation timing can be correlated with one completed MapDispatch and durably recorded before later-wave admission.
+_Avoid_: Harness timing, coordinator elapsed time, inferred latency
+
 **Sparse MAP Result**:
 A compact MAP output that states each anchored Claim once, binds Claims to ordered evidence indexes, and represents non-retained evidence with explicit exclusion ranges.
 _Avoid_: Full coverage ledger, compressed transcript
