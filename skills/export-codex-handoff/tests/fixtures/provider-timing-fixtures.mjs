@@ -89,6 +89,23 @@ export const PROVIDER_TIMING_PT1_FIXTURE = Object.freeze({
   }),
 });
 
+export const PROVIDER_TIMING_PT2_FIXTURE = Object.freeze({
+  freshSlots: PROVIDER_TIMING_PT0_FIXTURE.freshSlots,
+  availableProviderTimingCapability: Object.freeze({
+    available: true,
+    source: "provider",
+    observationPoint: "post_worker",
+    reasonCode: null,
+  }),
+  unavailableProviderTimingCapability:
+    PROVIDER_TIMING_PT0_FIXTURE.unavailableProviderTimingCapability,
+  diagnostics: Object.freeze({
+    invalidCapability: "INVALID_PROVIDER_TIMING_CAPABILITY",
+    unavailableCapability:
+      PROVIDER_TIMING_PT0_FIXTURE.diagnostics.unavailableCapability,
+  }),
+});
+
 export function createProviderTimingDispatches(createMapDispatch) {
   if (typeof createMapDispatch !== "function") {
     throw new TypeError("createMapDispatch must be the production dispatch factory");

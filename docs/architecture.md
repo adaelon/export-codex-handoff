@@ -110,8 +110,12 @@ rebuilt deterministically before acceptance. The projection is capped at 20,000 
 evidence plus dictionary plus projection is capped at 100,000 characters. Existing
 `frame-projection-v1` work directories retain
 their 400,000-character evidence-plus-projection path. The coordinator observes currently available
-dedicated worker slots before each dispatch wave, gives one frame-bound MapDispatch to each isolated
-worker, and stops with `needs-user` when no slot exists. Workers atomically claim dispatch identity,
+dedicated worker slots before each dispatch wave and stops with `needs-user` when no slot exists. If
+the current dispatches fit that fresh capacity, the wave needs no timing capability. If dispatches
+remain beyond it, the coordinator validates an exact four-field `ProviderTimingCapability` before
+returning any dispatch: an unavailable capability returns `PROVIDER_TIMING_UNAVAILABLE`, while an
+available provider/post-worker capability admits only the first wave within that capacity. Workers
+then atomically claim one admitted frame-bound MapDispatch,
 read only the contract selected by `mapResultMode`, and write private summary candidates.
 `validate-map --check`
 reports structural or `MAP_OUTPUT_TOO_LARGE` errors without
@@ -262,7 +266,14 @@ Source Thread UUID
   -> deterministic segment-local Evidence Reference Dictionary
        -> local evidence indexes + local exact-identifier indexes -> immutable dictionary digest
   -> compact Frame Projection bound to dictionary + global frame digest
-  -> dictionary/projection/input/output-bound MapDispatch -> isolated worker atomic claim
+  -> dictionary/projection/input/output-bound MapDispatch
+       -> observe fresh dedicated slots
+            -> zero slots: MAP_WORKER_UNAVAILABLE + zero admitted dispatches
+            -> all pending dispatches fit: admit one structural wave without timing capability
+            -> later wave required: validate exact ProviderTimingCapability
+                 -> unavailable: PROVIDER_TIMING_UNAVAILABLE + zero admitted dispatches
+                 -> available provider/post_worker surface: admit first wave within fresh capacity
+  -> isolated worker atomic claim
   -> worker reads private chunk -> writes mode-specific private MAP candidate
   -> non-consuming structure/output check -> immutable candidate digest
   -> [sparse] deterministic expansion -> digest-bound normalized full-MAP summary

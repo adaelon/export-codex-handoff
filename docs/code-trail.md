@@ -621,3 +621,14 @@
 
 **Entry point**: Run `validate-frame <workDir>`; after the Compression Frame validates, the coordinator evaluates the lower bound before it prepares any MapDispatch that a Worker could claim.
 **Test**: `node --test --test-isolation=none skills/export-codex-handoff/tests/provider-timing-pt1.test.mjs` exits 0 with 3/3 passing; `node --test --test-isolation=none skills/export-codex-handoff/tests/continuation-grade-r6.test.mjs skills/export-codex-handoff/tests/compression.test.mjs` exits 0 with 17/17 passing.
+
+## 2026-08-10 Slice PT2 Provider Timing Capability preflight
+
+**Touched**:
+- `skills/export-codex-handoff/scripts/lib/performance-calibration.mjs:validateProviderTimingCapability` — validates exactly `available`, `source`, `observationPoint`, and `reasonCode`, including their available/unavailable invariants, without consulting model identity or clocks.
+- `skills/export-codex-handoff/scripts/lib/map-worker.mjs:scheduleMapDispatches` — preserves zero-slot and single-wave behavior, then rejects unavailable timing before returning any structurally multi-wave dispatch.
+- `skills/export-codex-handoff/tests/fixtures/provider-timing-fixtures.mjs:PROVIDER_TIMING_PT2_FIXTURE` and `tests/provider-timing-pt2.test.mjs:PT2 acceptance tests` — lock strict capability validation, zero-slot precedence, four/three rejection, three/three compatibility, and available first-wave admission.
+- `docs/slice-plan-provider-timing-capability.md:Slice PT2` and `docs/architecture.md:MAP admission flow` — record the implemented capability boundary and leave provider-duration ingress to PT3.
+
+**Entry point**: After a caller freshly observes dedicated capacity, it passes the pending MapDispatches, that slot count, and—only for structural multi-wave work—the execution-surface capability to `scheduleMapDispatches` before creating Workers or claiming dispatches.
+**Test**: PT2 passes 3/3; the exact R6/Worker/Compression regression command passes 23/23 with only allowlisted `TEMP`/`TMP` redirected to the writable fixture directory for its existing nested CLI subprocess.

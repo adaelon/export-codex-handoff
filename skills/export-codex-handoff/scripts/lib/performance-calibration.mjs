@@ -6,6 +6,16 @@ export const PRE_DISPATCH_PUBLICATION_RESERVE_MS = 20_000;
 
 const REPRESENTATIVE_SAMPLE_CLASSES = ["smallest", "median", "largest"];
 const CONFIG_FACTORS = ["model", "reasoningEffort", "slotCount"];
+const PROVIDER_TIMING_CAPABILITY_FIELDS = [
+  "available",
+  "source",
+  "observationPoint",
+  "reasonCode",
+];
+const PROVIDER_TIMING_UNAVAILABLE_REASONS = new Set([
+  "not_exposed",
+  "not_correlatable",
+]);
 const UTC_PHASE_BOUNDARY_PATTERN =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?Z$/;
 
@@ -66,6 +76,57 @@ function validateProviderSource(value, label) {
       `${label} must come from provider timing, not harness elapsed time`,
     );
   }
+}
+
+export function validateProviderTimingCapability(capability) {
+  requireObject(
+    capability,
+    "ProviderTimingCapability",
+    "INVALID_PROVIDER_TIMING_CAPABILITY",
+  );
+  const keys = Object.keys(capability);
+  if (
+    keys.length !== PROVIDER_TIMING_CAPABILITY_FIELDS.length ||
+    PROVIDER_TIMING_CAPABILITY_FIELDS.some((field) => !keys.includes(field))
+  ) {
+    throw new ExportHandoffError(
+      "INVALID_PROVIDER_TIMING_CAPABILITY",
+      `ProviderTimingCapability fields must be exactly ${PROVIDER_TIMING_CAPABILITY_FIELDS.join(", ")}`,
+    );
+  }
+  if (typeof capability.available !== "boolean") {
+    throw new ExportHandoffError(
+      "INVALID_PROVIDER_TIMING_CAPABILITY",
+      "ProviderTimingCapability.available must be a boolean",
+    );
+  }
+  if (capability.available) {
+    if (
+      capability.source !== "provider" ||
+      capability.observationPoint !== "post_worker" ||
+      capability.reasonCode !== null
+    ) {
+      throw new ExportHandoffError(
+        "INVALID_PROVIDER_TIMING_CAPABILITY",
+        "An available ProviderTimingCapability requires source provider, observationPoint post_worker, and a null reasonCode",
+      );
+    }
+  } else if (
+    capability.source !== null ||
+    capability.observationPoint !== null ||
+    !PROVIDER_TIMING_UNAVAILABLE_REASONS.has(capability.reasonCode)
+  ) {
+    throw new ExportHandoffError(
+      "INVALID_PROVIDER_TIMING_CAPABILITY",
+      "An unavailable ProviderTimingCapability requires null source and observationPoint plus reasonCode not_exposed or not_correlatable",
+    );
+  }
+  return {
+    available: capability.available,
+    source: capability.source,
+    observationPoint: capability.observationPoint,
+    reasonCode: capability.reasonCode,
+  };
 }
 
 export function validateMapGenerationMetric(metric) {

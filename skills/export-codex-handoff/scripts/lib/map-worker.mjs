@@ -1,5 +1,8 @@
 import { sha256Text } from "./evidence-addressing.mjs";
-import { projectFirstWaveBudget } from "./performance-calibration.mjs";
+import {
+  projectFirstWaveBudget,
+  validateProviderTimingCapability,
+} from "./performance-calibration.mjs";
 import { ExportHandoffError } from "./source-thread.mjs";
 
 export const MAP_RECEIPT_MAX_CHARS = 2_048;
@@ -320,6 +323,18 @@ export function scheduleMapDispatches(dispatches, availableSlots, options = {}) 
       diagnosticCode: "MAP_WORKER_UNAVAILABLE",
       dispatches: [],
     };
+  }
+  if (dispatches.length > availableSlots) {
+    const capability = validateProviderTimingCapability(
+      options.providerTimingCapability,
+    );
+    if (!capability.available) {
+      return {
+        status: "needs-user",
+        diagnosticCode: "PROVIDER_TIMING_UNAVAILABLE",
+        dispatches: [],
+      };
+    }
   }
   if (options.firstWave) {
     const projection = projectFirstWaveBudget({

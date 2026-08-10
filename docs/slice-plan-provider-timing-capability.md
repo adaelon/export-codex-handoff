@@ -163,6 +163,10 @@ if dispatches remain:
 
 **Done when**: four dispatches with three slots and unavailable timing fail before Worker creation; three dispatches with three slots remain admissible; available capability admits the first wave; and zero slots still returns `MAP_WORKER_UNAVAILABLE` before capability evaluation.
 
+**PT2 implementation evidence**: [performance-calibration.mjs](../skills/export-codex-handoff/scripts/lib/performance-calibration.mjs) exports `validateProviderTimingCapability` and admits only the exact four-field available or unavailable variants; missing, extra, contradictory, and inferred fields fail with `INVALID_PROVIDER_TIMING_CAPABILITY`. [map-worker.mjs](../skills/export-codex-handoff/scripts/lib/map-worker.mjs) first handles a freshly supplied zero-slot observation, then requires the validated capability only when the current dispatch count exceeds that same capacity. Unavailable timing returns `PROVIDER_TIMING_UNAVAILABLE` with no dispatches; a valid available capability returns only the first wave. The task workflow and manifest bindings remain unchanged, and no duration is observed or persisted.
+
+**Exact verification evidence**: `node --test --test-isolation=none skills/export-codex-handoff/tests/provider-timing-pt2.test.mjs` exits `0` with 3/3 tests passing. With only the allowlisted `TEMP`/`TMP` redirected to the writable fixture directory for the pre-existing nested CLI subprocess, `node --test --test-isolation=none skills/export-codex-handoff/tests/continuation-grade-r6.test.mjs skills/export-codex-handoff/tests/map-worker.test.mjs skills/export-codex-handoff/tests/compression.test.mjs` exits `0` with 23/23 tests passing. No post-worker observation ingress, MAP duration, frozen-manifest migration, live-target change, manual commit, or push was introduced.
+
 ### Slice PT3: Post-worker provider-observation ingress
 
 **Input**: PT2 capability, one completed Worker turn, its immutable MapDispatch, accepted MapReceipt, and execution-surface provider observation.
