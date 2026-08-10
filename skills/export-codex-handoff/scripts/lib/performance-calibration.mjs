@@ -1,9 +1,13 @@
 import { ExportHandoffError } from "./source-thread.mjs";
 
 export const LIVE_ACCEPTANCE_TARGET_MS = 600_000;
+export const PRE_DISPATCH_REDUCE_RESERVE_MS = 60_000;
+export const PRE_DISPATCH_PUBLICATION_RESERVE_MS = 20_000;
 
 const REPRESENTATIVE_SAMPLE_CLASSES = ["smallest", "median", "largest"];
 const CONFIG_FACTORS = ["model", "reasoningEffort", "slotCount"];
+const UTC_PHASE_BOUNDARY_PATTERN =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?Z$/;
 
 function requireObject(value, label, code = "INVALID_CALIBRATION_RUN") {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -31,6 +35,28 @@ function requirePositiveInteger(value, label, code = "INVALID_CALIBRATION_RUN") 
     throw new ExportHandoffError(code, `${label} must be a positive integer`);
   }
   return value;
+}
+
+function requirePhaseBoundary(value, label) {
+  const match = typeof value === "string" ? UTC_PHASE_BOUNDARY_PATTERN.exec(value) : null;
+  const parsed = match ? Date.parse(value) : Number.NaN;
+  const date = Number.isFinite(parsed) ? new Date(parsed) : null;
+  const milliseconds = Number((match?.[7] || "0").padEnd(3, "0"));
+  const invalidBoundary = !match || !date ||
+    date.getUTCFullYear() !== Number(match[1]) ||
+    date.getUTCMonth() + 1 !== Number(match[2]) ||
+    date.getUTCDate() !== Number(match[3]) ||
+    date.getUTCHours() !== Number(match[4]) ||
+    date.getUTCMinutes() !== Number(match[5]) ||
+    date.getUTCSeconds() !== Number(match[6]) ||
+    date.getUTCMilliseconds() !== milliseconds;
+  if (invalidBoundary) {
+    throw new ExportHandoffError(
+      "INVALID_PRE_DISPATCH_PHASE_BOUNDARY",
+      `${label} must be an ISO-8601 UTC timestamp`,
+    );
+  }
+  return parsed;
 }
 
 function validateProviderSource(value, label) {
@@ -209,6 +235,56 @@ export function compareCalibrationRuns(baselineRun, candidateRun) {
     deltaMs: candidate.projectedTotalMs - baseline.projectedTotalMs,
     baseline,
     candidate,
+  };
+}
+
+export function projectPreDispatchLowerBound(input) {
+  requireObject(input, "Pre-dispatch projection", "INVALID_PRE_DISPATCH_PROJECTION");
+  const createdAtMs = requirePhaseBoundary(input.createdAt, "createdAt");
+  const frameValidatedAtMs = requirePhaseBoundary(
+    input.frameValidatedAt,
+    "frameValidatedAt",
+  );
+  if (frameValidatedAtMs < createdAtMs) {
+    throw new ExportHandoffError(
+      "INVALID_PRE_DISPATCH_PHASE_BOUNDARY",
+      "frameValidatedAt must not precede createdAt",
+    );
+  }
+
+  const targetMs = input.targetMs ?? LIVE_ACCEPTANCE_TARGET_MS;
+  requirePositiveInteger(
+    targetMs,
+    "targetMs",
+    "INVALID_PRE_DISPATCH_PROJECTION",
+  );
+  const reduceReserveMs = requireNonNegativeDuration(
+    input.reduceReserveMs ?? PRE_DISPATCH_REDUCE_RESERVE_MS,
+    "reduceReserveMs",
+    "INVALID_PRE_DISPATCH_PROJECTION",
+  );
+  const publicationReserveMs = requireNonNegativeDuration(
+    input.publicationReserveMs ?? PRE_DISPATCH_PUBLICATION_RESERVE_MS,
+    "publicationReserveMs",
+    "INVALID_PRE_DISPATCH_PROJECTION",
+  );
+  const prepareAndFrameMs = frameValidatedAtMs - createdAtMs;
+  const projectedTotalMs = prepareAndFrameMs + reduceReserveMs + publicationReserveMs;
+  if (!Number.isFinite(projectedTotalMs)) {
+    throw new ExportHandoffError(
+      "INVALID_PRE_DISPATCH_PROJECTION",
+      "Pre-dispatch lower bound must be a finite duration",
+    );
+  }
+  return {
+    createdAt: input.createdAt,
+    frameValidatedAt: input.frameValidatedAt,
+    prepareAndFrameMs,
+    reduceReserveMs,
+    publicationReserveMs,
+    projectedTotalMs,
+    targetMs,
+    abort: projectedTotalMs > targetMs,
   };
 }
 

@@ -58,6 +58,7 @@ import {
 import { validateProgressEvidence } from "./progress-evidence.mjs";
 import {
   buildPerformanceMetrics,
+  projectPreDispatchLowerBound,
   validateMapGenerationMetric,
   validateReduceGenerationMetric,
 } from "./performance-calibration.mjs";
@@ -254,6 +255,10 @@ async function recordTerminalFailure(workDir, phase, error, timing = {}) {
       ),
       workerMetrics: {
         initialMaps: Array.isArray(manifest.segments) ? manifest.segments.length : 0,
+        acceptedMaps: [
+          ...(manifest.segments || []),
+          ...(manifest.turnAggregates || []),
+        ].filter((stage) => stage.receiptAcceptedAt).length,
         maxAggregateMapOutputChars: manifest.maxAggregateMapOutputChars || null,
         ...outputMetrics,
         maxObservedFrameProjectionChars: Math.max(
@@ -1708,6 +1713,24 @@ export async function validateFrameStage(workDir) {
   manifest.frameId = validated.frameId;
   manifest.frameDigest = validated.frameDigest;
   manifest.frameValidatedAt ??= new Date().toISOString();
+  await writeManifest(manifest);
+
+  try {
+    const projection = projectPreDispatchLowerBound({
+      createdAt: manifest.createdAt,
+      frameValidatedAt: manifest.frameValidatedAt,
+    });
+    if (projection.abort) {
+      throw new ExportHandoffError(
+        "LIVE_BUDGET_UNREACHABLE",
+        `Pre-dispatch lower bound ${projection.projectedTotalMs} ms exceeds the ${projection.targetMs} ms live acceptance target`,
+        { projection },
+      );
+    }
+  } catch (error) {
+    await recordTerminalFailure(workDir, "pre-dispatch", error);
+    throw error;
+  }
 
   const chunks = [];
   for (const segment of manifest.segments) {

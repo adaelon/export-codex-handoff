@@ -67,6 +67,28 @@ export const PROVIDER_TIMING_PT0_FIXTURE = Object.freeze({
   }),
 });
 
+export const PROVIDER_TIMING_PT1_FIXTURE = Object.freeze({
+  targetMs: 600_000,
+  reduceReserveMs: 60_000,
+  publicationReserveMs: 20_000,
+  unreachable: Object.freeze({
+    createdAt: "2026-08-10T00:00:00.000Z",
+    frameValidatedAt: "2026-08-10T00:10:44.844Z",
+    prepareAndFrameMs: 644_844,
+    projectedTotalMs: 724_844,
+  }),
+  withinBudget: Object.freeze({
+    createdAt: "2026-08-10T00:00:00.000Z",
+    frameValidatedAt: "2026-08-10T00:00:45.000Z",
+    prepareAndFrameMs: 45_000,
+    projectedTotalMs: 125_000,
+  }),
+  diagnostics: Object.freeze({
+    invalidPhaseBoundary: "INVALID_PRE_DISPATCH_PHASE_BOUNDARY",
+    invalidProjection: "INVALID_PRE_DISPATCH_PROJECTION",
+  }),
+});
+
 export function createProviderTimingDispatches(createMapDispatch) {
   if (typeof createMapDispatch !== "function") {
     throw new TypeError("createMapDispatch must be the production dispatch factory");

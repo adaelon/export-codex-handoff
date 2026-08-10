@@ -128,12 +128,15 @@ Performance calibration is deterministic bookkeeping, not a model-selection heur
 runs use the same representative smallest, median, and largest dispatch fixture and change exactly
 one of model, reasoning effort, or slot count. Provider-reported MAP and REDUCE generation time is
 kept separate from Node check/complete/accept, REDUCE preparation/check, and transactional
-publication time; harness elapsed time cannot enter a provider field. Before later waves, the
-coordinator combines complete first-wave samples with a freshly observed slot count and conservative
-REDUCE/publication reserves. A projection above 600,000 ms returns
-`LIVE_BUDGET_UNREACHABLE` with no dispatches. The current model and reasoning configuration stays
-unchanged unless a controlled provider-timed comparison wins; concurrency never exceeds the fresh
-slot observation.
+publication time; harness elapsed time cannot enter a provider field. Immediately after Frame
+validation, the coordinator projects the `createdAt`-to-`frameValidatedAt` workflow duration plus
+fixed conservative 60,000 ms REDUCE and 20,000 ms publication reserves. Invalid UTC boundaries fail
+deterministically; a lower bound above 600,000 ms writes a retained terminal report and returns
+`LIVE_BUDGET_UNREACHABLE` before MAP contexts, MapDispatch descriptors, or claims exist. Before later
+waves, the coordinator separately combines complete first-wave provider samples with a freshly
+observed slot count and conservative REDUCE/publication reserves. The current model and reasoning
+configuration stays unchanged unless a controlled provider-timed comparison wins; concurrency never
+exceeds the fresh slot observation.
 
 The Evidence Index stores every locator, source revision, UTF-16 range, and digest without copying
 complete rollout payloads. New Evidence Packs deterministically select Critical Anchors before
@@ -251,6 +254,10 @@ Source Thread UUID
   -> frame-input.json
   -> active-task Frame v2 (byte-exact goal + clause exclusions + proposal? + terminal)
        -> frame.json -> validate + freeze digest
+       -> pre-dispatch lower bound (prepare/frame + REDUCE/publication reserves)
+            -> invalid boundary: stable diagnostic + retained terminal report
+            -> >600000ms: LIVE_BUDGET_UNREACHABLE + zero MapDispatches/claims
+            -> <=600000ms: continue unchanged
   -> bounded complete-turn or packed-fragment segment
   -> deterministic segment-local Evidence Reference Dictionary
        -> local evidence indexes + local exact-identifier indexes -> immutable dictionary digest

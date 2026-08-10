@@ -609,3 +609,15 @@
 
 **Entry point**: Run the PT0 Node test against the synthetic fixture; capability admission and `recordMapGenerationMetric` remain deliberately absent from production until PT2 and PT3.
 **Test**: `node --test --test-isolation=none skills/export-codex-handoff/tests/provider-timing-pt0.test.mjs` exits 1 with 2/4 passing; its only failures are the current three-dispatch/no-diagnostic admission result versus `PROVIDER_TIMING_UNAVAILABLE` with zero dispatches, and `recordMapGenerationMetric` being `undefined`. The unchanged R6/Worker/CLI command exits 0 with 14/14 passing; its sandbox run redirected only the allowlisted `TEMP`/`TMP` variables to the writable fixture directory for the pre-existing nested CLI subprocess. Test argv and runtime code were unchanged.
+
+## 2026-08-10 Slice PT1 pre-dispatch lower-bound gate
+
+**Touched**:
+- `skills/export-codex-handoff/scripts/lib/performance-calibration.mjs:projectPreDispatchLowerBound` — validates ordered UTC Frame boundaries, the unchanged 600,000 ms target, and conservative 60,000/20,000 ms REDUCE/publication reserves before returning a deterministic abort projection.
+- `skills/export-codex-handoff/scripts/lib/task-workflow-core.mjs:validateFrameStage / recordTerminalFailure` — persists validated Frame identity, rejects an unreachable lower bound before MAP context/dispatch construction, and reports explicit accepted-MAP count without deleting the managed work directory.
+- `skills/export-codex-handoff/tests/fixtures/provider-timing-fixtures.mjs:PROVIDER_TIMING_PT1_FIXTURE` — adds exact 644,844 ms unreachable and 45,000 ms within-budget phase boundaries plus stable PT1 diagnostics.
+- `skills/export-codex-handoff/tests/provider-timing-pt1.test.mjs:PT1 acceptance tests` — locks projection validation, zero-claim terminal reporting, retained workdir state, absent public output, and unchanged within-budget atomic claiming.
+- `docs/slice-plan-provider-timing-capability.md:Slice PT1` and `docs/architecture.md:performance flow` — record only the implemented Frame-to-pre-dispatch ordering and exact verification evidence while PT2 capability and PT3 observation ingress remain pending.
+
+**Entry point**: Run `validate-frame <workDir>`; after the Compression Frame validates, the coordinator evaluates the lower bound before it prepares any MapDispatch that a Worker could claim.
+**Test**: `node --test --test-isolation=none skills/export-codex-handoff/tests/provider-timing-pt1.test.mjs` exits 0 with 3/3 passing; `node --test --test-isolation=none skills/export-codex-handoff/tests/continuation-grade-r6.test.mjs skills/export-codex-handoff/tests/compression.test.mjs` exits 0 with 17/17 passing.

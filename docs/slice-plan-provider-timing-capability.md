@@ -1,6 +1,6 @@
 # Provider Timing Capability and Multi-Wave Recovery Slices
 
-Status: accepted; PT0 ready for controller verification (authentic red); PT1-PT5 pending
+Status: accepted; PT0 ready for controller verification (authentic red); PT1 ready for controller verification; PT2-PT5 pending
 
 Scope: make multi-wave MAP scheduling fail before semantic work when trustworthy provider timing is unavailable, and consume dispatch-bound provider observations when the execution surface supports them.
 Decision: [ADR-0014 Provider Timing Capability for Multi-Wave MAP](./adr/0014-provider-timing-capability-for-multi-wave-map.md).
@@ -148,6 +148,10 @@ if dispatches remain:
 **Does not do**: require a provider sample, schedule a Worker, change the 600,000 ms target, or classify workflow time as provider time.
 
 **Done when**: the 644,844 ms fixture returns `LIVE_BUDGET_UNREACHABLE` before any claim; a within-budget fixture proceeds unchanged; missing or invalid phase boundaries fail deterministically; and the terminal report contains phase timings with zero accepted MAPs.
+
+**PT1 implementation evidence**: [performance-calibration.mjs](../skills/export-codex-handoff/scripts/lib/performance-calibration.mjs) exports `projectPreDispatchLowerBound` with the unchanged 600,000 ms target, the conservative 60,000 ms REDUCE and 20,000 ms publication reserves already used by the R6 control vector, strict UTC phase-boundary validation, and stable `INVALID_PRE_DISPATCH_PHASE_BOUNDARY` / `INVALID_PRE_DISPATCH_PROJECTION` diagnostics. [task-workflow-core.mjs](../skills/export-codex-handoff/scripts/lib/task-workflow-core.mjs) persists the validated Frame identity and runs that projection before building MAP contexts or MapDispatch descriptors; an over-budget result writes a retained `pre-dispatch` terminal report with `phaseTimingsMs` and `acceptedMaps: 0`, then throws `LIVE_BUDGET_UNREACHABLE`. The within-budget route continues through the unchanged context, dispatch, and atomic-claim path.
+
+**Exact verification evidence**: `node --test --test-isolation=none skills/export-codex-handoff/tests/provider-timing-pt1.test.mjs` exits `0` with 3/3 tests passing. `node --test --test-isolation=none skills/export-codex-handoff/tests/continuation-grade-r6.test.mjs skills/export-codex-handoff/tests/compression.test.mjs` exits `0` with 17/17 tests passing. No provider sample, Worker scheduling, capability admission, post-worker observation ingress, frozen-directory migration, public artifact, manual commit, or push was introduced.
 
 ### Slice PT2: Provider Timing Capability preflight
 
