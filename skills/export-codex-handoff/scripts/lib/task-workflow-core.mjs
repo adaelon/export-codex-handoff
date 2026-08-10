@@ -25,6 +25,7 @@ import {
   CONTINUATION_MAP_V2_RESULT_MODE,
   createMapDispatch,
   isContinuationMapResultMode,
+  scheduleMapDispatches,
   SPARSE_MAP_RESULT_MODE,
   validateMapDispatch,
   validateMapReceipt,
@@ -58,6 +59,8 @@ import {
 import { validateProgressEvidence } from "./progress-evidence.mjs";
 import {
   buildPerformanceMetrics,
+  PRE_DISPATCH_PUBLICATION_RESERVE_MS,
+  PRE_DISPATCH_REDUCE_RESERVE_MS,
   projectPreDispatchLowerBound,
   validateMapGenerationObservation,
   validateReduceGenerationMetric,
@@ -2559,6 +2562,284 @@ export async function recordMapGenerationMetric(
   };
   await writeManifest(manifest);
   return { recorded: true, metricDigest };
+}
+
+function incompleteFirstWaveMetrics(message, details = {}) {
+  throw new ExportHandoffError(
+    "INCOMPLETE_FIRST_WAVE_METRICS",
+    message,
+    details,
+  );
+}
+
+function requireStageDuration(stage, field) {
+  const value = stage[field];
+  if (!Number.isFinite(value) || value < 0) {
+    incompleteFirstWaveMetrics(
+      `${stage.segmentId} requires a non-negative ${field} observation`,
+      { segmentId: stage.segmentId, field },
+    );
+  }
+  return value;
+}
+
+async function validatedAcceptedStageMetric(stage) {
+  let metric;
+  try {
+    metric = validateMapGenerationMetricState(
+      stage.mapGenerationMetric,
+      stage,
+    );
+  } catch (error) {
+    incompleteFirstWaveMetrics(
+      `${stage.segmentId} has a broken or non-correlated provider observation`,
+      {
+        segmentId: stage.segmentId,
+        causeCode: error.code || "ERROR",
+      },
+    );
+  }
+  const receiptDocument = await readJsonDocument(
+    stage.receiptPath,
+    `${stage.segmentId} accepted MAP receipt`,
+  );
+  validateMapReceipt(receiptDocument.value, stage.dispatch);
+  validateAcceptedReceiptMetadata(stage, receiptDocument.value);
+  const receiptDigest = `sha256:${sha256Text(receiptDocument.text)}`;
+  if (metric.receiptDigest !== receiptDigest) {
+    throw new ExportHandoffError(
+      "MAP_RECEIPT_INTEGRITY_MISMATCH",
+      `${stage.segmentId} accepted MapReceipt changed after its provider metric was recorded`,
+    );
+  }
+  return {
+    stage,
+    observation: metric.observation,
+    metricDigest: metric.metricDigest,
+    checkAcceptMs: requireStageDuration(stage, "checkDurationMs")
+      + requireStageDuration(stage, "completeDurationMs")
+      + requireStageDuration(stage, "acceptDurationMs"),
+  };
+}
+
+function validateAcceptedWaveGroups(stageMetrics, totalDispatches) {
+  const providerObservationIds = new Set();
+  const dispatchIds = new Set();
+  const waves = new Map();
+  let expectedModel = null;
+  let expectedReasoningEffort = null;
+
+  for (const sample of stageMetrics) {
+    const { observation } = sample;
+    if (
+      providerObservationIds.has(observation.providerObservationId) ||
+      dispatchIds.has(observation.dispatchId)
+    ) {
+      incompleteFirstWaveMetrics(
+        "Every accepted MAP dispatch must contribute exactly one unique provider observation",
+        {
+          providerObservationId: observation.providerObservationId,
+          dispatchId: observation.dispatchId,
+        },
+      );
+    }
+    providerObservationIds.add(observation.providerObservationId);
+    dispatchIds.add(observation.dispatchId);
+    if (expectedModel === null) {
+      expectedModel = observation.model;
+      expectedReasoningEffort = observation.reasoningEffort;
+    } else if (
+      observation.model !== expectedModel ||
+      observation.reasoningEffort !== expectedReasoningEffort
+    ) {
+      incompleteFirstWaveMetrics(
+        "Accepted MAP observations must use one correlated model and reasoning effort",
+      );
+    }
+    const group = waves.get(observation.wave) || {
+      wave: observation.wave,
+      availableSlots: observation.availableSlots,
+      samples: [],
+    };
+    if (group.availableSlots !== observation.availableSlots) {
+      incompleteFirstWaveMetrics(
+        `Wave ${observation.wave} observations do not share one fresh slot count`,
+        { wave: observation.wave },
+      );
+    }
+    group.samples.push(sample);
+    waves.set(observation.wave, group);
+  }
+
+  const orderedWaves = [...waves.values()].sort((left, right) => (
+    left.wave - right.wave
+  ));
+  if (
+    orderedWaves.length === 0 ||
+    orderedWaves.some((group, index) => group.wave !== index + 1)
+  ) {
+    incompleteFirstWaveMetrics(
+      "Accepted MAP observations must form contiguous waves beginning at wave 1",
+    );
+  }
+  let completedDispatches = 0;
+  for (const group of orderedWaves) {
+    const expectedDispatches = Math.min(
+      totalDispatches - completedDispatches,
+      group.availableSlots,
+    );
+    if (group.samples.length !== expectedDispatches) {
+      incompleteFirstWaveMetrics(
+        `Wave ${group.wave} has ${group.samples.length} observations; expected ${expectedDispatches}`,
+        {
+          wave: group.wave,
+          observedDispatches: group.samples.length,
+          expectedDispatches,
+          availableSlots: group.availableSlots,
+        },
+      );
+    }
+    completedDispatches += group.samples.length;
+  }
+  return orderedWaves;
+}
+
+async function collectLaterWaveSchedulingInput(manifest) {
+  if (manifest.mapGenerationMetricMode !== MAP_GENERATION_METRIC_MODE) {
+    throw new ExportHandoffError(
+      "PROVIDER_TIMING_INGRESS_UNAVAILABLE",
+      "Later-wave scheduling requires the immutable post-worker provider-observation binding",
+    );
+  }
+  const stages = [
+    ...(manifest.segments || []),
+    ...(manifest.turnAggregates || []),
+  ].filter((stage) => stage.dispatch);
+  if (stages.length === 0) {
+    incompleteFirstWaveMetrics("Later-wave scheduling requires at least one MapDispatch");
+  }
+  const acceptedStages = stages.filter((stage) => stage.receiptAcceptedAt);
+  const pendingStages = stages.filter((stage) => (
+    !stage.receiptAcceptedAt && stage.workerStatus === "pending"
+  ));
+  const exhausted = stages.find((stage) => stage.workerStatus === "exhausted");
+  if (exhausted) {
+    throw new ExportHandoffError(
+      "MAP_WORKER_EXHAUSTED",
+      `${exhausted.segmentId} exhausted both MAP Worker attempts`,
+      { diagnosticsDir: exhausted.diagnosticsDir },
+    );
+  }
+  if (pendingStages.length === 0 && acceptedStages.length === stages.length) {
+    return {
+      complete: true,
+      totalDispatches: stages.length,
+      acceptedDispatches: acceptedStages.length,
+      pendingDispatches: [],
+    };
+  }
+  const nonSchedulable = stages.filter((stage) => (
+    !stage.receiptAcceptedAt && stage.workerStatus !== "pending"
+  ));
+  if (nonSchedulable.length > 0) {
+    incompleteFirstWaveMetrics(
+      "Every unfinished MAP dispatch must remain pending before a later wave is scheduled",
+      { segmentIds: nonSchedulable.map((stage) => stage.segmentId) },
+    );
+  }
+  const missingMetrics = acceptedStages
+    .filter((stage) => !stage.mapGenerationMetric)
+    .map((stage) => stage.dispatch.dispatchId);
+  if (acceptedStages.length === 0 || missingMetrics.length > 0) {
+    incompleteFirstWaveMetrics(
+      "Every accepted first-wave dispatch requires one provider observation",
+      { missingDispatchIds: missingMetrics },
+    );
+  }
+
+  const stageMetrics = [];
+  for (const stage of acceptedStages) {
+    stageMetrics.push(await validatedAcceptedStageMetric(stage));
+  }
+  const waveGroups = validateAcceptedWaveGroups(stageMetrics, stages.length);
+  const firstWave = waveGroups[0];
+  const prepareAndFrameMs = elapsedMs(
+    manifest.createdAt,
+    manifest.frameValidatedAt,
+  );
+  if (prepareAndFrameMs === null) {
+    incompleteFirstWaveMetrics(
+      "Later-wave scheduling requires valid prepare/frame phase boundaries",
+    );
+  }
+  return {
+    complete: false,
+    nextWave: waveGroups.at(-1).wave + 1,
+    pendingDispatches: pendingStages.map((stage) => stage.dispatch),
+    firstWave: {
+      totalDispatches: stages.length,
+      completedDispatches: firstWave.samples.length,
+      prepareAndFrameMs,
+      mapGenerationSamples: firstWave.samples.map(
+        (sample) => sample.observation.providerLatencyMs,
+      ),
+      checkAcceptSamples: firstWave.samples.map(
+        (sample) => sample.checkAcceptMs,
+      ),
+      reduceMs: PRE_DISPATCH_REDUCE_RESERVE_MS,
+      publicationMs: PRE_DISPATCH_PUBLICATION_RESERVE_MS,
+    },
+  };
+}
+
+async function scheduleNextMapWaveInternal(workDir, availableSlots) {
+  const manifest = await loadManifest(workDir);
+  const input = await collectLaterWaveSchedulingInput(manifest);
+  if (input.complete) {
+    return {
+      status: "complete",
+      availableSlots,
+      dispatches: [],
+      totalDispatches: input.totalDispatches,
+      acceptedDispatches: input.acceptedDispatches,
+    };
+  }
+  const schedulable = input.pendingDispatches.slice(
+    0,
+    Number.isInteger(availableSlots) && availableSlots > 0
+      ? availableSlots
+      : input.pendingDispatches.length,
+  );
+  const scheduled = scheduleMapDispatches(
+    schedulable,
+    availableSlots,
+    { firstWave: input.firstWave },
+  );
+  if (scheduled.status !== "ready") {
+    throw new ExportHandoffError(
+      scheduled.diagnosticCode,
+      scheduled.diagnosticCode === "MAP_WORKER_UNAVAILABLE"
+        ? "No fresh dedicated MAP Worker slot is available for the next wave"
+        : `Later-wave projection ${scheduled.projection.projectedTotalMs} ms exceeds the ${scheduled.projection.targetMs} ms live acceptance target`,
+      {
+        wave: input.nextWave,
+        availableSlots,
+        ...(scheduled.projection ? { projection: scheduled.projection } : {}),
+      },
+    );
+  }
+  return {
+    ...scheduled,
+    wave: input.nextWave,
+  };
+}
+
+export async function scheduleNextMapWave(workDir, availableSlots) {
+  return withTerminalFailureReport(
+    workDir,
+    "schedule-map",
+    () => scheduleNextMapWaveInternal(workDir, availableSlots),
+  );
 }
 
 export async function validateMapStage(workDir, segmentId) {

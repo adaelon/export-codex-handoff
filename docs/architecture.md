@@ -137,8 +137,14 @@ validation, the coordinator projects the `createdAt`-to-`frameValidatedAt` workf
 fixed conservative 60,000 ms REDUCE and 20,000 ms publication reserves. Invalid UTC boundaries fail
 deterministically; a lower bound above 600,000 ms writes a retained terminal report and returns
 `LIVE_BUDGET_UNREACHABLE` before MAP contexts, MapDispatch descriptors, or claims exist. Before later
-waves, the coordinator separately combines complete first-wave provider samples with a freshly
-observed slot count and conservative REDUCE/publication reserves. The current model and reasoning
+waves, the coordinator calls `schedule-map <WORK_DIR> <AVAILABLE_SLOTS>`. That boundary rereads only
+the manifest and accepted MapReceipts, verifies the receipt-bound metric integrity state, requires
+unique correlated observations and exact workflow durations for every admitted dispatch, and then
+combines the first-wave samples with the newly observed slot count and conservative
+REDUCE/publication reserves. Missing, duplicate, broken, or non-correlated samples produce
+`INCOMPLETE_FIRST_WAVE_METRICS`; zero capacity produces `MAP_WORKER_UNAVAILABLE`; an over-target
+projection produces `LIVE_BUDGET_UNREACHABLE`. Each is a retained schedule-map terminal failure report
+and cannot create an attempt-2 Worker dispatch or public output. The current model and reasoning
 configuration stays unchanged unless a controlled provider-timed comparison wins; concurrency never
 exceeds the fresh slot observation.
 
@@ -294,9 +300,15 @@ Source Thread UUID
        -> receipt-bound SHA-256 metric digest -> additive manifest integrity state
        -> identical replay: stable; conflict/mismatch: fail closed without receipt mutation
   -> workflow-owned check/complete/accept observation remains separate from provider latency
-  -> first-wave conservative projection
-       -> <=600000ms: dispatch next wave within freshly observed slots
-       -> >600000ms: fail fast with LIVE_BUDGET_UNREACHABLE
+  -> schedule-map <WORK_DIR> <AVAILABLE_SLOTS>
+       -> accepted receipt + metric digest integrity validation
+       -> unique correlated observations + contiguous complete wave groups
+       -> missing/duplicate/broken sample: INCOMPLETE_FIRST_WAVE_METRICS
+       -> fresh slots == 0: MAP_WORKER_UNAVAILABLE
+       -> first-wave conservative projection with fixed REDUCE/publication reserves
+            -> <=600000ms: dispatch next wave within freshly observed slots
+            -> >600000ms: LIVE_BUDGET_UNREACHABLE
+       -> every failure: retained schedule-map terminal failure report; no retry/publication
   -> [sparse/legacy fragment path] all child receipts validate -> deterministic parent summary
   -> [continuation] completed tables -> one global Claim table + Critical Anchor disposition
        -> deterministic Accepted Proposal/Terminal-State Claims inserted once

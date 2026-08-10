@@ -14,6 +14,7 @@ export {
   prepareReduceStage,
   publishHandoff,
   recordMapGenerationMetric,
+  scheduleNextMapWave,
   validateFrameStage,
   validateMapStage,
 } from "./task-workflow-core.mjs";

@@ -647,3 +647,15 @@
 
 **Entry point**: After `validate-map --accept`, write the exact provider document and run `record-map-metric <WORK_DIR> <SEGMENT_ID> <DISPATCH_ID> <OBSERVATION_FILE>`; never attach timing to `validate-map --check`.
 **Test**: PT0 passes 4/4; PT3 plus MAP Worker passes 11/11, including identical replay with unchanged manifest bytes and accepted receipt digest after every successful or rejected ingress.
+
+## 2026-08-10 Slice PT4 later-wave scheduling and terminal diagnostics
+
+**Touched**:
+- `skills/export-codex-handoff/scripts/lib/task-workflow-core.mjs:scheduleNextMapWave / collectLaterWaveSchedulingInput` — validates accepted receipt-bound observations and workflow durations, groups complete waves, projects from the first wave with fresh capacity, and records schedule-map terminal failures without retry mutation.
+- `skills/export-codex-handoff/scripts/lib/map-worker.mjs:scheduleMapDispatches` — accepts validated first-wave projection input on later waves, returns the ready projection, and bounds dispatches by the newly observed slot count.
+- `skills/export-codex-handoff/scripts/export-handoff.mjs:schedule-map` — exposes the fresh-capacity host adapter separately from Worker claim/check/complete/accept actions.
+- `skills/export-codex-handoff/tests/provider-timing-pt4.test.mjs:PT4 acceptance tests` — cover exact samples and reserves, CLI-ready dispatch, missing/duplicate/non-correlated metrics, zero slots, over-budget failure reports, receipt retention, no retries, and no public output.
+- `docs/slice-plan-provider-timing-capability.md:Slice PT4` and `docs/architecture.md:schedule-map flow` — record the implemented later-wave and retained-failure boundaries while leaving PT5 unopened.
+
+**Entry point**: After every admitted first-wave receipt has been accepted and its provider observation recorded, observe capacity again and run `schedule-map <WORK_DIR> <AVAILABLE_SLOTS>`.
+**Test**: PT0-PT4 pass 19/19; the complete repository suite passes 173/173 with zero skips under the documented writable-temp Git ceiling; `git diff --check` passes.

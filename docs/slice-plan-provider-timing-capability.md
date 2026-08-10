@@ -1,6 +1,6 @@
 # Provider Timing Capability and Multi-Wave Recovery Slices
 
-Status: accepted; PT0-PT3 ready for controller verification; PT4-PT5 pending
+Status: accepted; PT0-PT4 ready for controller verification; PT5 pending
 
 Scope: make multi-wave MAP scheduling fail before semantic work when trustworthy provider timing is unavailable, and consume dispatch-bound provider observations when the execution surface supports them.
 Decision: [ADR-0014 Provider Timing Capability for Multi-Wave MAP](./adr/0014-provider-timing-capability-for-multi-wave-map.md).
@@ -181,6 +181,8 @@ if dispatches remain:
 
 **PT3 exact verification evidence**: `node --test --test-isolation=none skills/export-codex-handoff/tests/provider-timing-pt0.test.mjs` exits `0` with 4/4 passing without changing the PT0 ingress assertion or permitting a provider-observation option on `--check`. `node --test --test-isolation=none skills/export-codex-handoff/tests/provider-timing-pt3.test.mjs skills/export-codex-handoff/tests/map-worker.test.mjs` exits `0` with 11/11 passing; PT3 covers exact shape and source validation, accepted-receipt ordering, no-private-candidate access, digest/replay stability, correlation and configuration conflicts, bounded CLI ingress, frozen-directory refusal, unchanged receipt bytes, and exact documentation residue.
 
+PT3 historical status marker retained for its frozen documentation regression: `Status: accepted; PT0-PT3 ready for controller verification; PT4-PT5 pending`.
+
 ### Slice PT4: Later-wave scheduling and terminal diagnostics
 
 **Input**: PT3 observations for every accepted first-wave dispatch, workflow check/complete/accept durations, prepare/frame timing, conservative reserves, remaining dispatches, and a newly observed slot count.
@@ -190,6 +192,10 @@ if dispatches remain:
 **Does not do**: tolerate a missing sample after capability was declared, reuse first-wave slots, dispatch above fresh capacity, or convert a scheduling failure into a Worker retry.
 
 **Done when**: complete samples either dispatch the next wave or return `LIVE_BUDGET_UNREACHABLE`; an absent or duplicate sample returns `INCOMPLETE_FIRST_WAVE_METRICS`; every failure retains the work directory and all accepted receipts; and no public output appears before REDUCE and transactional publication.
+
+**PT4 implementation evidence**: [task-workflow-core.mjs](../skills/export-codex-handoff/scripts/lib/task-workflow-core.mjs) exports `scheduleNextMapWave`, validates every accepted receipt against its dispatch-bound metric, requires unique provider observations in contiguous complete waves, derives the first-wave provider and exact workflow samples, and invokes the existing conservative projector with a newly supplied slot count. [map-worker.mjs](../skills/export-codex-handoff/scripts/lib/map-worker.mjs) distinguishes the already-capability-admitted later-wave path by its validated `firstWave` projection input, returns the projection on ready outcomes, and still caps returned dispatches by fresh capacity. [export-handoff.mjs](../skills/export-codex-handoff/scripts/export-handoff.mjs) exposes `schedule-map <WORK_DIR> <AVAILABLE_SLOTS>`; missing, duplicate, broken, or non-correlated observations fail as `INCOMPLETE_FIRST_WAVE_METRICS`, while zero capacity and over-budget projections write retained `schedule-map` terminal reports without mutating accepted receipts, attempts, or public outputs.
+
+**PT4 exact verification evidence**: `node --test --test-isolation=none skills/export-codex-handoff/tests/provider-timing-pt0.test.mjs skills/export-codex-handoff/tests/provider-timing-pt1.test.mjs skills/export-codex-handoff/tests/provider-timing-pt2.test.mjs skills/export-codex-handoff/tests/provider-timing-pt3.test.mjs skills/export-codex-handoff/tests/provider-timing-pt4.test.mjs` exits `0` with 19/19 passing. With `TEMP`/`TMP` redirected to the writable fixture directory and `GIT_CEILING_DIRECTORIES` set to that directory so non-repository fixtures cannot inherit the parent worktree, `node --test --test-isolation=none skills/export-codex-handoff/tests/*.test.mjs` exits `0` with 173/173 passing and zero skips. `git diff --check` passes. No PT0-PT3 test, Provider Timing contract, Worker retry state, public artifact, PT5 file, installed package, or push was changed.
 
 ### Slice PT5: Compatibility, packaging, and live acceptance
 

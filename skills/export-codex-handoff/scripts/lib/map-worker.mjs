@@ -324,7 +324,7 @@ export function scheduleMapDispatches(dispatches, availableSlots, options = {}) 
       dispatches: [],
     };
   }
-  if (dispatches.length > availableSlots) {
+  if (dispatches.length > availableSlots && !options.firstWave) {
     const capability = validateProviderTimingCapability(
       options.providerTimingCapability,
     );
@@ -336,8 +336,9 @@ export function scheduleMapDispatches(dispatches, availableSlots, options = {}) 
       };
     }
   }
+  let projection = null;
   if (options.firstWave) {
-    const projection = projectFirstWaveBudget({
+    projection = projectFirstWaveBudget({
       ...options.firstWave,
       availableSlots,
     });
@@ -354,6 +355,7 @@ export function scheduleMapDispatches(dispatches, availableSlots, options = {}) 
     status: "ready",
     availableSlots,
     dispatches: dispatches.slice(0, availableSlots),
+    ...(projection ? { projection } : {}),
   };
 }
 

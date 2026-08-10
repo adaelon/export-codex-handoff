@@ -19,6 +19,7 @@ import {
   prepareReduceStage,
   publishHandoff,
   recordMapGenerationMetric,
+  scheduleNextMapWave,
   validateFrameStage,
   validateMapStage,
 } from "./lib/task-workflow.mjs";
@@ -30,6 +31,7 @@ function usage() {
   node export-handoff.mjs validate-frame <WORK_DIR>
   node export-handoff.mjs validate-map <WORK_DIR> <SEGMENT_ID> [--claim <DISPATCH_ID> --worker <WORKER_ID> | --check <DISPATCH_ID> | --complete <DISPATCH_ID> | --accept <DISPATCH_ID>]
   node export-handoff.mjs record-map-metric <WORK_DIR> <SEGMENT_ID> <DISPATCH_ID> <OBSERVATION_FILE>
+  node export-handoff.mjs schedule-map <WORK_DIR> <AVAILABLE_SLOTS>
   node export-handoff.mjs prepare-reduce <WORK_DIR>
   node export-handoff.mjs validate-reduce <WORK_DIR> --check
   node export-handoff.mjs publish <WORK_DIR> [--keep-workdir]
@@ -141,6 +143,19 @@ function parseMapMetricAction(args) {
   };
 }
 
+function parseScheduleMapAction(args) {
+  if (args.length !== 2) {
+    throw new Error("schedule-map requires WORK_DIR AVAILABLE_SLOTS");
+  }
+  return {
+    workDir: requirePositional(args, 0, "WORK_DIR"),
+    availableSlots: integerValue(
+      requirePositional(args, 1, "AVAILABLE_SLOTS"),
+      "AVAILABLE_SLOTS",
+    ),
+  };
+}
+
 async function readBoundedObservationDocument(target) {
   const handle = await fs.promises.open(target, "r");
   try {
@@ -211,6 +226,10 @@ async function dispatch(command, args) {
       action.dispatchId,
       observation,
     );
+  }
+  if (command === "schedule-map") {
+    const action = parseScheduleMapAction(args);
+    return scheduleNextMapWave(action.workDir, action.availableSlots);
   }
   if (command === "prepare-reduce") {
     return prepareReduceStage(requirePositional(args, 0, "WORK_DIR"));
