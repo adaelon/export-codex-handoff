@@ -1,4 +1,4 @@
 interface:
   display_name: "Export Codex Handoff"
   short_description: "Compress a Codex thread in a dedicated task"
-  default_prompt: "Use $export-codex-handoff in a fresh dedicated task to compress Codex session <UUID> into a portable Handoff."
+  default_prompt: "Use $export-codex-handoff in a fresh dedicated task to compress Codex session <UUID> into a portable Handoff. Require Provider Timing Capability before any structurally multi-wave MAP claim and report unsupported surfaces exactly."

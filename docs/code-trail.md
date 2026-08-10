@@ -659,3 +659,17 @@
 
 **Entry point**: After every admitted first-wave receipt has been accepted and its provider observation recorded, observe capacity again and run `schedule-map <WORK_DIR> <AVAILABLE_SLOTS>`.
 **Test**: PT0-PT4 pass 19/19; the complete repository suite passes 173/173 with zero skips under the documented writable-temp Git ceiling; `git diff --check` passes.
+
+## 2026-08-10 Slice PT5 compatibility, packaging, and truthful live acceptance
+
+**Touched**:
+- `skills/export-codex-handoff/SKILL.md:Workflow step 4` — requires exact ProviderTimingCapability admission before multi-wave claims, receipt-bound `record-map-metric`, and fresh-capacity `schedule-map` before later waves.
+- `skills/export-codex-handoff/references/contracts.md:Provider Timing Capability and multi-wave admission` — publishes the exact capability, observation, compatibility, ingress, projection, and retained-failure contracts.
+- `skills/export-codex-handoff/agents/openai.yaml:interface.default_prompt` — exposes the multi-wave capability boundary in the installed Skill metadata.
+- `skills/export-codex-handoff/scripts/export-handoff.mjs:usage` — documents the fail-early and post-worker provider timing lifecycle without changing CLI behavior.
+- `skills/export-codex-handoff/tests/provider-timing-pt5.test.mjs:PT5 acceptance tests` — freezes compatibility routes, single-wave admission, provider-source rejection, CLI/docs residue, truthful blocker reporting, and explicit installed-package tree comparison.
+- `docs/provider-timing-live-acceptance.md:Exact external capability blocker` — records the unsupported collaboration surface, zero-Worker fail-early proof, and exact unblock condition without claiming live publication.
+- `docs/slice-plan-provider-timing-capability.md:Slice PT5` and `docs/architecture.md:multi-wave live acceptance boundary` — close packaging while retaining the external live-acceptance blocker.
+
+**Entry point**: For multi-wave work, validate current ProviderTimingCapability before any claim; on a supported surface record every admitted observation and call `schedule-map`, otherwise stop with `PROVIDER_TIMING_UNAVAILABLE` and zero admitted dispatches.
+**Test**: PT0-PT5 pass 24/24; the complete repository suite passes 178/178 with zero skips; CLI help and both Skill validators pass; repository and installed packages match at 72/72 relative files with package digest `sha256:c7630f7623158deca274d732c9f718595bff6bb6be854e7938258ff139c254c9`; `git diff --check` passes. Live acceptance remains `BLOCKED` because the current surface exposes no provider-reported per-worker duration correlated with MapDispatch.

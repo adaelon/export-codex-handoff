@@ -49,7 +49,16 @@ Prepare options:
   --map-output-chars <count> Maximum aggregate accepted MAP output characters (default: 3x REDUCE target for sparse; 1x for continuation)
   --map-result-mode <mode>  MAP contract: sparse-map-v1 (default), continuation-map-v1, or continuation-map-v2
   --codex-home <path>      Override CODEX_HOME for Source Thread discovery
-  --help                   Show this help`;
+  --help                   Show this help
+
+Provider timing for multi-wave MAP:
+  1. Observe fresh dedicated slots and ProviderTimingCapability before any Worker claim.
+  2. If timing is unavailable for a structurally multi-wave run, stop with
+     PROVIDER_TIMING_UNAVAILABLE and zero admitted dispatches.
+  3. After accepting each admitted Worker receipt, use record-map-metric with
+     provider-reported latency only.
+  4. Before a later wave, observe fresh slots again and use schedule-map.
+  Never substitute coordinator or harness elapsed time for provider latency.`;
 }
 
 function requireValue(args, index, option) {

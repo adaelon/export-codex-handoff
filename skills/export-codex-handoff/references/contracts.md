@@ -36,6 +36,75 @@ It also returns `initialMaps`, `maxObservedMapInputChars`, `maxAggregateMapOutpu
 `rawMapOutputChars`, mode-specific `normalizedMapOutputChars` or `completedMapOutputChars`, and
 `phaseTimingsMs` for prepare-and-frame, MAP, REDUCE-and-publish, and total wall-clock acceptance.
 
+## Provider Timing Capability and multi-wave admission
+
+Immediately after Frame validation, the workflow applies the deterministic pre-dispatch lower-bound
+gate. A projection above 600,000 ms fails with `LIVE_BUDGET_UNREACHABLE` before MAP contexts,
+MapDispatch descriptors, or claims exist. If that gate admits the run, the coordinator observes a
+fresh dedicated Worker slot count. Zero slots returns `MAP_WORKER_UNAVAILABLE`. A structurally
+single-wave run (`totalDispatches <= availableSlots`) remains compatible without provider timing.
+
+Before any Worker claim for a structurally multi-wave run, the execution surface supplies exactly:
+
+```text
+ProviderTimingCapability {
+  available: boolean
+  source: provider | null
+  observationPoint: post_worker | null
+  reasonCode: not_exposed | not_correlatable | null
+}
+```
+
+The available variant is exactly `true / provider / post_worker / null`. The unavailable variant is
+exactly `false / null / null / not_exposed|not_correlatable`. Missing, extra, contradictory, or
+inferred fields fail with `INVALID_PROVIDER_TIMING_CAPABILITY`. When unavailable, multi-wave
+admission returns `PROVIDER_TIMING_UNAVAILABLE` and zero admitted dispatches before Worker creation
+or claim. Model identity, coordinator clocks, and harness elapsed time cannot establish capability.
+
+After each admitted Worker completes and its MapReceipt is accepted, a supported surface may expose
+one provider-reported post-worker observation:
+
+```text
+MapGenerationObservation {
+  providerObservationId: string
+  dispatchId: string
+  segmentId: string
+  providerLatencyMs: non-negative number
+  source: provider
+  model: string
+  reasoningEffort: string
+  wave: positive integer
+  availableSlots: positive integer
+}
+```
+
+Persist that exact bounded document only through the post-worker ingress:
+
+```text
+node <skill-dir>/scripts/export-handoff.mjs record-map-metric <WORK_DIR> <SEGMENT_ID> <DISPATCH_ID> <OBSERVATION_FILE>
+```
+
+The ingress requires the immutable dispatch and an accepted receipt, correlates dispatch, segment,
+model, reasoning effort, wave, and fresh slot count, and binds the exact receipt bytes into the metric
+digest. It does not read private MAP evidence or candidates. Identical replay is byte-stable;
+conflicting replay, reused observation identity, non-provider source, or configuration mismatch fails
+closed. Work directories without the immutable `provider-observation-v1` binding are never
+retrofitted.
+
+Before every later wave, observe capacity again and call:
+
+```text
+node <skill-dir>/scripts/export-handoff.mjs schedule-map <WORK_DIR> <AVAILABLE_SLOTS>
+```
+
+This boundary verifies one unique receipt-bound provider observation plus exact workflow
+check/complete/accept durations for every accepted admitted dispatch, requires contiguous complete
+wave groups, and invokes the conservative first-wave projection. Missing, duplicate, broken, or
+non-correlated observations return `INCOMPLETE_FIRST_WAVE_METRICS`; zero fresh capacity returns
+`MAP_WORKER_UNAVAILABLE`; an over-target projection returns `LIVE_BUDGET_UNREACHABLE`. Each failure
+retains accepted receipts and the managed work directory, writes a `schedule-map` terminal report,
+and creates neither a Worker retry nor public output.
+
 ## Performance calibration and fail-fast projection
 
 R6 keeps provider generation latency separate from workflow execution latency. A controlled
@@ -62,11 +131,13 @@ change exactly one of them while keeping the fixture and dispatch count fixed. M
 generation samples marked as harness elapsed time fail with `INVALID_PROVIDER_LATENCY`; they are
 never treated as provider latency.
 
-Before a later dispatch wave, the coordinator may pass the freshly observed slot count and complete
-first-wave samples to `scheduleMapDispatches`. The conservative projection uses the slowest
-first-wave MAP generation for every projected wave, the slowest check/accept duration for every
-dispatch, plus measured prepare/frame, REDUCE, and publication reserves. A result above 600,000 ms
-returns `status: aborted`, `LIVE_BUDGET_UNREACHABLE`, and no dispatches.
+The production later-wave boundary obtains the freshly observed slot count from `schedule-map` and
+derives complete first-wave samples only from persisted receipt-bound provider observations. The
+conservative projection uses the slowest first-wave MAP generation for every projected wave, the
+slowest check/accept duration for every dispatch, plus measured prepare/frame and conservative
+REDUCE/publication reserves. A result above 600,000 ms returns `status: aborted`,
+`LIVE_BUDGET_UNREACHABLE`, and no dispatches. Direct projector calls remain calibration/test tools,
+not a substitute for production observation integrity checks.
 
 Publication results and terminal failure reports retain the broad compatibility field
 `phaseTimingsMs` and add a fixed four-part `performanceMetrics` object:
@@ -605,7 +676,10 @@ MapReceipt {
 The Compression Task coordinator never opens `chunkPath`. Immediately before each dispatch wave,
 use the freshly observed number of available dedicated worker slots and dispatch no more workers
 than that number. If no slot is available, return `needs-user` with
-`MAP_WORKER_UNAVAILABLE`; never run a sequential MAP in the coordinator.
+`MAP_WORKER_UNAVAILABLE`; never run a sequential MAP in the coordinator. Before the first claim,
+route the pending set through the ProviderTimingCapability admission contract above. A multi-wave
+unavailable result admits no dispatch, while a single-wave set needs no timing capability. Only
+dispatches returned by that admission step may be claimed.
 
 Each isolated worker handles exactly one `MapDispatch`:
 
@@ -643,6 +717,12 @@ Acceptance verifies the durable receipt and summary digest and returns any newly
 dispatch. A wrong dispatch or
 segment identity, stale frame digest, oversized receipt, duplicate receipt, or changed validated
 summary fails closed.
+
+For each accepted dispatch in a capability-admitted wave, the host records exactly one provider
+observation with `record-map-metric <WORK_DIR> <SEGMENT_ID> <DISPATCH_ID> <OBSERVATION_FILE>`.
+Before any remaining dispatch is claimed, it observes capacity again and calls
+`schedule-map <WORK_DIR> <AVAILABLE_SLOTS>`. Provider observation failures are scheduling failures,
+not MAP attempt failures; they never produce an attempt-2 dispatch.
 
 New sparse runs allocate at most three times the REDUCE `targetMaxChars` across their initial MAP
 dispatches. The sum of immutable `maxMapOutputChars` values equals that aggregate budget. The exact

@@ -238,6 +238,14 @@ receipt-bound SHA-256 metric state to the manifest. It reads no chunk, raw/norma
 candidate, Frame Projection, or Evidence Reference Dictionary; identical replay returns the same
 digest without rewriting state, while correlation, receipt, or replay conflicts fail closed.
 
+Multi-wave live acceptance is an execution-surface property, not a repository-only simulation. A
+surface counts as supported only when its Worker result contains a durable provider-reported duration
+that the host can bind to the immutable MapDispatch before later-wave admission. Package-tree equality,
+single-wave compatibility, or coordinator elapsed time cannot satisfy that boundary. The current
+surface observation and exact unblock condition are recorded in
+[Provider Timing Live Acceptance](./provider-timing-live-acceptance.md); an unsupported surface exits
+before semantic MAP work and leaves publication unopened.
+
 The v2 publisher validates the Handoff budget, Evidence Index budget, coverage graph, frozen frame,
 source-revision binding, and live Source Thread revision before either output is visible. Sparse,
 missing-mode, and `continuation-map-v1` routes retain the legacy renderer. `continuation-map-v2`

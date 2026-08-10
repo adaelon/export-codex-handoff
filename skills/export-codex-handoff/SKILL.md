@@ -73,8 +73,16 @@ Resolve `<skill-dir>` to this skill folder. Run helper commands yourself; do not
    - Immediately before each dispatch wave, inspect the currently available dedicated worker slots.
      Dispatch no more workers than the fresh slot count. If no slot is available, return
      `needs-user` with `MAP_WORKER_UNAVAILABLE`; never read evidence sequentially in the coordinator.
-   - Give exactly one complete packed `MapDispatch` to each fresh worker. The worker must first
-     claim it:
+   - Before any Worker claim, pass the pending dispatches and fresh slot count through the exported
+     `scheduleMapDispatches`. If all dispatches fit, the structurally single-wave run remains
+     compatible and does not require provider timing. If dispatches remain, supply an exact
+     `ProviderTimingCapability` observed from the current execution surface. Only
+     `{ available: true, source: "provider", observationPoint: "post_worker", reasonCode: null }`
+     admits the first wave. A known unsupported or non-correlatable surface must supply the exact
+     unavailable variant and stop with `PROVIDER_TIMING_UNAVAILABLE`, zero admitted dispatches, and
+     no Worker creation or claim. Never infer capability from model identity or clocks.
+   - Give exactly one complete packed `MapDispatch` from the admitted first-wave result to each fresh
+     worker. The worker must first claim it:
 
      ```text
      node <skill-dir>/scripts/export-handoff.mjs validate-map <workDir> <segmentId> --claim <dispatchId> --worker <workerId>
@@ -127,15 +135,31 @@ Resolve `<skill-dir>` to this skill folder. Run helper commands yourself; do not
      On the first failure, dispatch the returned attempt-2 `nextDispatch` to a fresh
      isolated worker. On `MAP_WORKER_EXHAUSTED`, stop and report the retained diagnostics and
      `workDir`.
-   - Record provider MAP generation latency only when the execution surface exposes provider timing;
-     never substitute coordinator or harness elapsed time. Keep model and reasoning effort unchanged
-     unless `compareCalibrationRuns` evaluates the same fixture and dispatch count with exactly one
-     changed factor and selects the candidate.
-   - Before any later wave, observe the fresh slot count and evaluate complete first-wave samples with
-     the exported deterministic `projectFirstWaveBudget` from
-     `scripts/lib/performance-calibration.mjs`. Include measured prepare/frame time and conservative
-     REDUCE/publication reserves. If it returns `abort: true`, dispatch nothing and stop with
-     `LIVE_BUDGET_UNREACHABLE`. Do not hand-estimate or reuse an earlier slot count.
+   - After accepting each admitted receipt on a supported surface, take the provider-reported
+     post-worker observation exposed for that exact Worker turn and write the strict nine-field
+     `MapGenerationObservation`. Record it through the separate bounded ingress:
+
+     ```text
+     node <skill-dir>/scripts/export-handoff.mjs record-map-metric <WORK_DIR> <SEGMENT_ID> <DISPATCH_ID> <OBSERVATION_FILE>
+     ```
+
+     The observation must bind the immutable dispatch and segment, provider observation ID, provider
+     latency, model, reasoning effort, wave, and that wave's fresh slot count. Never substitute
+     coordinator, spawn, wait, shell, or harness elapsed time. Keep model and reasoning effort
+     unchanged unless `compareCalibrationRuns` evaluates the same fixture and dispatch count with
+     exactly one changed factor and selects the candidate.
+   - Before any later wave, observe a new fresh slot count and use the production scheduling ingress:
+
+     ```text
+     node <skill-dir>/scripts/export-handoff.mjs schedule-map <WORK_DIR> <AVAILABLE_SLOTS>
+     ```
+
+     It verifies one receipt-bound provider observation and exact workflow durations for every
+     accepted admitted dispatch, then invokes the exported deterministic `projectFirstWaveBudget`
+     with the existing conservative REDUCE/publication reserves. Dispatch only its returned
+     `dispatches`. Stop without retry or publication on `INCOMPLETE_FIRST_WAVE_METRICS`,
+     `MAP_WORKER_UNAVAILABLE`, or `LIVE_BUDGET_UNREACHABLE`; do not hand-estimate, call the projector
+     directly, or reuse an earlier slot count.
    - New runs return no parent aggregate dispatch. After every child receipt is accepted, the
      deterministic workflow folds ordered fragment coverage and existing claims into one parent
      turn without semantic rewriting; a Claim spanning multiple fragments is referenced once in
@@ -205,6 +229,12 @@ Resolve `<skill-dir>` to this skill folder. Run helper commands yourself; do not
    Anchor coverage, no contract-shape retry, output at most 40,000 characters, successful
    `verify-evidence`, and `phaseTimingsMs.total <= 600000`.
 
+   If a fresh structurally multi-wave acceptance surface exposes no durable provider-reported
+   per-worker generation duration correlated with one immutable MapDispatch, report that exact
+   external capability blocker and the fail-early `PROVIDER_TIMING_UNAVAILABLE` result. Do not launch
+   semantic MAP work, reuse an old work directory, substitute another clock, or present single-wave
+   compatibility as multi-wave live success.
+
 11. For action-ready live acceptance, use a separate fresh continuation task; the Compression Task
     must not consume its own artifact. Give the continuation task the published Handoff path and the
     returned consumer contract. Verify from its persisted rollout that it emits a substantive draft
@@ -222,6 +252,8 @@ Resolve `<skill-dir>` to this skill folder. Run helper commands yourself; do not
 - Never dispatch evidence plus dictionary plus Frame Projection above the configured MAP-input budget.
 - Never accept a continuation candidate above its immutable dispatch MAP-output budget.
 - Never infer worker capacity from an earlier wave; observe dedicated slots immediately before dispatch.
+- Never claim or create a Worker for a structurally multi-wave run after ProviderTimingCapability
+  reports unavailable; return `PROVIDER_TIMING_UNAVAILABLE` with zero admitted dispatches.
 - Never fall back to coordinator-side sequential MAP when no isolated worker slot is available.
 - Require an atomic MapDispatch claim and bounded validated MapReceipt before accepting a summary.
 - Preserve every Critical Anchor through exact continuation coverage; keep all other anchors retrievable

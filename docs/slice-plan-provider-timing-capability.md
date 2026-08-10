@@ -1,6 +1,6 @@
 # Provider Timing Capability and Multi-Wave Recovery Slices
 
-Status: accepted; PT0-PT4 ready for controller verification; PT5 pending
+Status: accepted through PT4; PT5 packaging complete; live acceptance BLOCKED on missing provider-reported per-worker timing correlated with MapDispatch
 
 Scope: make multi-wave MAP scheduling fail before semantic work when trustworthy provider timing is unavailable, and consume dispatch-bound provider observations when the execution surface supports them.
 Decision: [ADR-0014 Provider Timing Capability for Multi-Wave MAP](./adr/0014-provider-timing-capability-for-multi-wave-map.md).
@@ -197,6 +197,8 @@ PT3 historical status marker retained for its frozen documentation regression: `
 
 **PT4 exact verification evidence**: `node --test --test-isolation=none skills/export-codex-handoff/tests/provider-timing-pt0.test.mjs skills/export-codex-handoff/tests/provider-timing-pt1.test.mjs skills/export-codex-handoff/tests/provider-timing-pt2.test.mjs skills/export-codex-handoff/tests/provider-timing-pt3.test.mjs skills/export-codex-handoff/tests/provider-timing-pt4.test.mjs` exits `0` with 19/19 passing. With `TEMP`/`TMP` redirected to the writable fixture directory and `GIT_CEILING_DIRECTORIES` set to that directory so non-repository fixtures cannot inherit the parent worktree, `node --test --test-isolation=none skills/export-codex-handoff/tests/*.test.mjs` exits `0` with 173/173 passing and zero skips. `git diff --check` passes. No PT0-PT3 test, Provider Timing contract, Worker retry state, public artifact, PT5 file, installed package, or push was changed.
 
+PT4 historical status marker retained for its frozen documentation regression: `Status: accepted; PT0-PT4 ready for controller verification; PT5 pending`.
+
 ### Slice PT5: Compatibility, packaging, and live acceptance
 
 **Input**: PT0-PT4, legacy and continuation compatibility suites, repository and installed skill packages, and one fresh supported execution surface.
@@ -206,6 +208,12 @@ PT3 historical status marker retained for its frozen documentation regression: `
 **Does not do**: claim live success on an unsupported surface, use the retained failed work directory, weaken provider-source validation, migrate existing manifests, or relax output and time budgets.
 
 **Done when**: legacy v1, missing-mode v2, `sparse-map-v1`, `continuation-map-v1`, and single-wave v2 remain compatible; repository and installed files match; unsupported timing fails before the first claim; a supported four-dispatch/three-slot run records complete provider samples; publication and `verify-evidence` succeed atomically with `phaseTimingsMs.total <= 600000`; otherwise PT5 remains blocked with the exact missing capability named.
+
+**PT5 implementation evidence**: [provider-timing-pt5.test.mjs](../skills/export-codex-handoff/tests/provider-timing-pt5.test.mjs) freezes the legacy/missing-mode/sparse/continuation/single-wave dispatch boundary, early unavailable-capability result, provider-source rejection, CLI help lifecycle, documentation contract, and explicit installed-directory package comparison. [SKILL.md](../skills/export-codex-handoff/SKILL.md), [contracts.md](../skills/export-codex-handoff/references/contracts.md), [openai.yaml](../skills/export-codex-handoff/agents/openai.yaml), and [export-handoff.mjs](../skills/export-codex-handoff/scripts/export-handoff.mjs) now route multi-wave work through exact capability admission, post-worker `record-map-metric`, and fresh-capacity `schedule-map` without changing PT0-PT4 runtime behavior or frozen compatibility routes.
+
+**PT5 live acceptance result**: [provider-timing-live-acceptance.md](./provider-timing-live-acceptance.md) records `BLOCKED`. On 2026-08-10 the current collaboration surface exposed agent identity/status and result content but no durable provider-reported per-worker generation duration or provider observation ID correlated with an immutable MapDispatch. No semantic MAP Worker was launched. The synthetic-safe four-dispatch/three-slot unsupported observation still returns `PROVIDER_TIMING_UNAVAILABLE` with zero admitted dispatches and rejects workflow elapsed time as `INVALID_PROVIDER_LATENCY`. A fresh atomic publication and `verify-evidence` are therefore not claimed; the blocker is external and named exactly.
+
+**PT5 exact verification evidence**: PT0-PT5 pass 24/24. With the documented writable `TEMP`/`TMP` fixture directory and matching `GIT_CEILING_DIRECTORIES`, the complete repository suite passes 178/178 with zero skips. `node skills/export-codex-handoff/scripts/export-handoff.mjs --help`, repository and installed `quick_validate.py`, and `git diff --check` pass. After synchronization, the explicit `EXPORT_CODEX_HANDOFF_INSTALLED_DIR=C:\Users\Lenovo\.codex\skills\export-codex-handoff` PT5 run passes 5/5; repository and installed Skill packages match at 72/72 relative files and SHA-256 package digest `sha256:c7630f7623158deca274d732c9f718595bff6bb6be854e7938258ff139c254c9`. No runtime behavior outside CLI help changed, no old manifest was migrated, and no live publication was claimed on the unsupported surface.
 
 ## 5. Acceptance matrix
 
