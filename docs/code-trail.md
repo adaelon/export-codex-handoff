@@ -673,3 +673,25 @@
 
 **Entry point**: For multi-wave work, validate current ProviderTimingCapability before any claim; on a supported surface record every admitted observation and call `schedule-map`, otherwise stop with `PROVIDER_TIMING_UNAVAILABLE` and zero admitted dispatches.
 **Test**: PT0-PT5 pass 24/24; the complete repository suite passes 178/178 with zero skips; CLI help and both Skill validators pass; repository and installed packages match at 72/72 relative files with package digest `sha256:c7630f7623158deca274d732c9f718595bff6bb6be854e7938258ff139c254c9`; `git diff --check` passes. Live acceptance remains `BLOCKED` because the current surface exposes no provider-reported per-worker duration correlated with MapDispatch.
+
+## 2026-08-11 Targeted MAP repair decision and slices
+
+**Touched**:
+- `CONTEXT.md:Failure Owner / MAP Repair Diagnostic / Targeted MAP Repair` — defines the earliest-owner and segment-local repair language.
+- `docs/adr/0015-earliest-owner-targeted-map-repair.md:Decision` — rejects clean-run recovery, mutable receipts, and generic retry messages.
+- `docs/slice-plan-targeted-map-repair.md:TR1-TR4` — orders diagnostics, targeted retry, operator contract, and deterministic acceptance.
+- `docs/architecture.md:Decision index` — indexes the accepted but not yet implemented repair boundary.
+
+**Entry point**: Start TR1 from `docs/slice-plan-targeted-map-repair.md`; runtime behavior remains unchanged until that slice begins.
+**Test**: `git diff --check` validates the documentation patch; no executable path changed in this slice.
+
+## 2026-08-11 Slice TR1 MAP repair diagnostic contract
+
+**Touched**:
+- `skills/export-codex-handoff/scripts/lib/validation.mjs:actionReadyCandidateRepairIssues / requireNoActionReadyCandidateRepair` — aggregates non-Critical exclusions, low-value verification Findings, and misclassified test-result Findings into one segment-local diagnostic without exposing Anchor IDs or evidence bodies.
+- `skills/export-codex-handoff/scripts/lib/validation.mjs:validateActionReadyContinuationCandidate` — raises `MAP_REPAIR_REQUIRED` only after the v2 candidate is structurally valid and before completion or receipt acceptance.
+- `skills/export-codex-handoff/tests/targeted-map-repair-tr1.test.mjs:TR1 diagnostic acceptance` — freezes issue order and fields, byte-unchanged non-consuming check state, same-diagnostic attempt-2 delivery, and unchanged unrelated dispatch IDs.
+- `docs/slice-plan-targeted-map-repair.md:Slice TR1` and `docs/architecture.md:continuation v2 MAP check` — record the implemented earliest-owner diagnostic boundary while leaving TR2-TR4 pending.
+
+**Entry point**: Run `validate-map <WORK_DIR> <SEGMENT_ID> --check <DISPATCH_ID>`; repair every returned issue in the same private candidate before completion.
+**Test**: The authentic red failed because the invalid candidate was accepted; TR1 passes 1/1, focused MAP/action-ready regression passes 20/20, and the complete Node suite passes 179/179 with zero skips.

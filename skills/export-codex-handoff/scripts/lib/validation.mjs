@@ -1169,6 +1169,99 @@ function actionReadyProgressReferences(progressEvidence) {
   return { references, inspections };
 }
 
+function actionReadyCandidateRepairIssues(
+  result,
+  dictionary,
+  expectedFrame,
+  claimsByLocalId,
+) {
+  const issues = [];
+  const criticalAnchors = new Set(
+    expectedFrame?.frame?.preservationPolicy?.requiredAnchors || [],
+  );
+  for (const [index, exclusion] of result.criticalExclusions.entries()) {
+    const anchorId = resolveEvidenceReferences(dictionary, [exclusion.evidenceIndex])[0];
+    if (!criticalAnchors.has(anchorId)) {
+      issues.push({
+        code: "NON_CRITICAL_EXCLUSION",
+        fieldPath: `criticalExclusions[${index}].evidenceIndex`,
+        message: "criticalExclusions may contain only Critical Anchor references",
+        correctionHint:
+          "Remove this entry; non-Critical evidence remains retrievable without an explicit exclusion.",
+      });
+    }
+  }
+
+  const claimIndexByLocalId = new Map(
+    result.claims.map((claim, index) => [claim.localId, index]),
+  );
+  for (const [index, finding] of result.findings.entries()) {
+    const claim = claimsByLocalId.get(finding.claim);
+    if (claim.kind === "verification") {
+      const operationClass = actionReadyVerificationClass(
+        claim.localId,
+        result.relations,
+      );
+      if (operationClass !== "verification") {
+        const article = /^[aeiou]/u.test(operationClass) ? "an" : "a";
+        issues.push({
+          code: "LOW_VALUE_FINDING",
+          fieldPath: `findings[${index}].claim`,
+          message:
+            `Finding references ${article} ${operationClass} result that must remain Cold Evidence`,
+          correctionHint:
+            "Remove this Finding or replace it with a deliverable-relevant semantic Claim.",
+        });
+      }
+      continue;
+    }
+
+    const verification = /^(.+) => (pass|fail|not_run|unknown)$/u.exec(claim.text);
+    if (
+      verification &&
+      classifyToolOperation({
+        inputReceipt: {
+          previewHead: JSON.stringify({ command: verification[1] }),
+          previewTail: "",
+        },
+      }) === "verification"
+    ) {
+      issues.push({
+        code: "MISCLASSIFIED_VERIFICATION_FINDING",
+        fieldPath: `claims[${claimIndexByLocalId.get(claim.localId)}].kind`,
+        message: `Finding references a verification result authored as ${claim.kind}`,
+        correctionHint:
+          "Change the Claim kind to verification and add its exact command/result relation.",
+      });
+    }
+  }
+  return issues;
+}
+
+function requireNoActionReadyCandidateRepair(
+  result,
+  dictionary,
+  expectedFrame,
+  claimsByLocalId,
+) {
+  const issues = actionReadyCandidateRepairIssues(
+    result,
+    dictionary,
+    expectedFrame,
+    claimsByLocalId,
+  );
+  if (issues.length === 0) return;
+  throw new ExportHandoffError(
+    "MAP_REPAIR_REQUIRED",
+    `${result.segmentId} MAP candidate requires ${issues.length} corrections`,
+    {
+      repairScope: "map_candidate",
+      segmentId: result.segmentId,
+      issues,
+    },
+  );
+}
+
 function validateActionReadyContinuationCandidate(
   result,
   dictionary,
@@ -1225,6 +1318,12 @@ function validateActionReadyContinuationCandidate(
         "Only a Progress Evidence dispatch may author action-ready relations",
       );
     }
+    requireNoActionReadyCandidateRepair(
+      result,
+      dictionary,
+      expectedFrame,
+      claimsByLocalId,
+    );
     return {
       result,
       claimsByLocalId,
@@ -1406,6 +1505,12 @@ function validateActionReadyContinuationCandidate(
       "Every Progress Evidence content inspection must be synthesized or targeted for follow-up",
     );
   }
+  requireNoActionReadyCandidateRepair(
+    result,
+    dictionary,
+    expectedFrame,
+    claimsByLocalId,
+  );
   return { result, claimsByLocalId, findingsByLocalId, progress };
 }
 

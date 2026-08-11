@@ -298,6 +298,9 @@ Source Thread UUID
   -> isolated worker atomic claim
   -> worker reads private chunk -> writes mode-specific private MAP candidate
   -> non-consuming structure/output check -> immutable candidate digest
+       -> [continuation v2] collect MAP-owned candidate issues before receipt acceptance
+            -> non-Critical exclusions + low-value/misclassified Findings
+            -> evidence-free MAP_REPAIR_REQUIRED { repairScope, segmentId, issues[] }
   -> [sparse] deterministic expansion -> digest-bound normalized full-MAP summary
   -> [continuation] local-reference resolution -> digest-bound compact Claim table
   -> bounded MapReceipt with raw + normalized/completed digests and sizes -> coordinator accepts
@@ -374,5 +377,6 @@ re-runs an indexed workspace observation and fails closed if its source revision
 - **Implemented retrieval/critical-coverage separation**: [Continuation-Grade Evidence Compression](./adr/0011-continuation-grade-evidence-compression.md)
 - **Action-ready Hot/Cold boundary and staged v2 route**: [Action-Ready Handoff Hot/Cold Boundary](./adr/0013-action-ready-handoff-hot-cold-boundary.md)
 - **Provider-observation admission and persistence boundary**: [Provider Timing Capability for Multi-Wave MAP](./adr/0014-provider-timing-capability-for-multi-wave-map.md)
+- **Implemented MAP-owned diagnostic boundary (TR1; targeted workflow pending)**: [Earliest-Owner Targeted MAP Repair](./adr/0015-earliest-owner-targeted-map-repair.md)
 
 - **Implemented version routing and transactional publication**: [Evidence-preserving compression slice plan](./slice-plan-evidence-preserving-compression.md#slice-6-transactional-publication-compatibility-and-end-to-end-evaluation)

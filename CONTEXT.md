@@ -84,6 +84,18 @@ _Avoid_: Segment descriptor, worker prompt
 A bounded validation outcome that binds one MapDispatch to either an immutable summary digest or one diagnostic code, without returning raw segment evidence.
 _Avoid_: MAP result, worker transcript
 
+**Failure Owner**:
+The earliest workflow stage whose authored artifact contains enough information to determine and correct a validation failure.
+_Avoid_: Stage that happened to report the failure, whole Compression Run
+
+**MAP Repair Diagnostic**:
+A bounded, segment-attributed list of MAP candidate violations and precise correction hints that exposes no private evidence.
+_Avoid_: Generic retry prompt, raw Worker evidence
+
+**Targeted MAP Repair**:
+Correction of only the MAP candidate named by a MAP Repair Diagnostic while unrelated validated MAP results remain reusable.
+_Avoid_: Clean Compression Run, full MAP replay
+
 **Provider Timing Capability**:
 An execution-surface guarantee that provider-reported MAP generation timing can be correlated with one completed MapDispatch and durably recorded before later-wave admission.
 _Avoid_: Harness timing, coordinator elapsed time, inferred latency
