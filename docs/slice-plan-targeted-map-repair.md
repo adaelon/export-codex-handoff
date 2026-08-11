@@ -69,6 +69,17 @@ Worker, prohibit clean-run recovery, and route REDUCE-owned defects to REDUCE-on
 **Done when**: the documented state machine has no instruction that restarts all MAP Workers for an
 attributable candidate problem.
 
+**Implementation evidence**: `SKILL.md` Workflow step 4 passes the exact ordered
+`details.issues[]` unchanged through same-attempt and attempt-2 repair, forbids clean-run recovery
+and unrelated MAP replay, and Workflow step 7 confines REDUCE-owned diagnostics to `reducedPath`.
+`continuation-map-v2-worker-contract.md` makes the issue list the Worker repair contract and limits
+each correction to the named segment candidate.
+
+**Acceptance evidence**: the authentic TR3 red failed 3/3 documentation assertions; TR3 then passes
+3/3. TR1-TR3 plus MAP Worker and Action-ready regressions pass 35/35; Skill, Markdown-link, and
+compatibility regressions pass 15/15; the complete Node suite passes 184/184 with zero skips, and
+`git diff --check` passes. No runtime file changed and TR4 remains unopened.
+
 ## Slice TR4 — Deterministic acceptance
 
 **Input**: the three retained failure classes: non-Critical exclusion, existence/mechanical

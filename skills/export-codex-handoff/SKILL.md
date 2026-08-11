@@ -112,12 +112,16 @@ Resolve `<skill-dir>` to this skill folder. Run helper commands yourself; do not
      arrays empty. It must not emit global Claim/Finding IDs, Evidence Anchor strings, full coverage
      ranges, or REDUCE fields. Its exact candidate file must not exceed the dispatch
      `maxMapOutputChars`; v2 deterministic completion must not exceed 16,000 characters.
-   - Before completion, run the non-consuming structural and output-budget check. Correct a reported
-     error in the same attempt without changing evidence semantics:
+   - Before completion, run the non-consuming structural and output-budget check:
 
      ```text
      node <skill-dir>/scripts/export-handoff.mjs validate-map <workDir> <segmentId> --check <dispatchId>
      ```
+
+     If it reports `MAP_REPAIR_REQUIRED`, pass the exact ordered `details.issues[]` unchanged to the
+     responsible Worker. Apply only the named `fieldPath` / `correctionHint` repairs, preserve
+     evidence semantics, and rerun `--check` on the same dispatch. Never replace the issue list with
+     generic retry guidance. Never start a clean Compression Run; never replay unrelated MAP Workers.
    - The worker completes its dispatch and returns only the bounded receipt:
 
      ```text
@@ -132,9 +136,12 @@ Resolve `<skill-dir>` to this skill folder. Run helper commands yourself; do not
      node <skill-dir>/scripts/export-handoff.mjs validate-map <workDir> <segmentId> --accept <dispatchId>
      ```
 
-     On the first failure, dispatch the returned attempt-2 `nextDispatch` to a fresh
-     isolated worker. On `MAP_WORKER_EXHAUSTED`, stop and report the retained diagnostics and
-     `workDir`.
+     When completion reports `MAP_REPAIR_REQUIRED`, dispatch the returned attempt-2 `nextDispatch`
+     to a fresh isolated Worker and pass the exact ordered `details.issues[]` unchanged alongside
+     it. Repair only that dispatch's private candidate; do not reopen accepted receipts or other
+     segments. For any other first failure that returns a `nextDispatch`, pass that dispatch and its
+     bounded diagnostic unchanged to a fresh isolated Worker. On `MAP_WORKER_EXHAUSTED`, stop and
+     report the retained diagnostics and `workDir`.
    - After accepting each admitted receipt on a supported surface, take the provider-reported
      post-worker observation exposed for that exact Worker turn and write the strict nine-field
      `MapGenerationObservation`. Record it through the separate bounded ingress:
@@ -188,7 +195,10 @@ Resolve `<skill-dir>` to this skill folder. Run helper commands yourself; do not
    node <skill-dir>/scripts/export-handoff.mjs validate-reduce <workDir> --check
    ```
 
-   Correct a deterministic shape error without changing accepted Claims. For
+   Treat a deterministic diagnostic reported here as REDUCE-owned: rewrite only `reducedPath` and
+   rerun the `validate-reduce` preflight without changing accepted Claims. A REDUCE-owned failure
+   must not create a MAP attempt-2 dispatch or replay a MAP Worker, and it never starts a clean
+   Compression Run. For
    `continuation-map-v2`, the check also enforces task-profile Actionability and deterministic Hot
    Context reachability, returning `HANDOFF_NOT_ACTIONABLE` or `HANDOFF_LOW_VALUE` before digest
    binding when the candidate cannot safely continue. The check binds the exact serialized

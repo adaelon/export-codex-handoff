@@ -705,3 +705,14 @@
 
 **Entry point**: After `validate-map --check` returns `MAP_REPAIR_REQUIRED`, overwrite only that dispatch's candidate and reuse its dispatch ID; after `validate-map --complete` returns the same diagnostic, claim only its returned attempt-2 dispatch.
 **Test**: TR2 passes 2/2; TR1/TR2 plus MAP Worker and Action-ready regressions pass 32/32; the complete Node suite passes 181/181 with zero skips.
+
+## 2026-08-11 Slice TR3 operator repair contract
+
+**Touched**:
+- `skills/export-codex-handoff/SKILL.md:Workflow steps 4 and 7` — passes the exact ordered MAP issue list through same-attempt and attempt-2 repair, forbids clean-run/unrelated replay, and confines REDUCE-owned correction to `reducedPath`.
+- `skills/export-codex-handoff/references/continuation-map-v2-worker-contract.md:Deterministic completion` — makes `details.issues[]` the field-specific repair contract for only the responsible segment candidate.
+- `skills/export-codex-handoff/tests/targeted-map-repair-tr3.test.mjs:TR3 operator contract tests` — freezes exact diagnostic delivery, the clean-run/replay prohibition, and REDUCE-only routing.
+- `docs/slice-plan-targeted-map-repair.md:Slice TR3` — records implementation and deterministic acceptance evidence while leaving TR4 unopened.
+
+**Entry point**: On `MAP_REPAIR_REQUIRED`, give the responsible Worker the unchanged ordered issue list and repair only its named candidate fields; on a REDUCE preflight diagnostic, rewrite only `reducedPath`.
+**Test**: Authentic red fails 3/3; TR3 passes 3/3; TR1-TR3 plus MAP Worker and Action-ready regressions pass 35/35; Skill/Markdown/compatibility regressions pass 15/15; the complete Node suite passes 184/184 with zero skips; `git diff --check` passes.

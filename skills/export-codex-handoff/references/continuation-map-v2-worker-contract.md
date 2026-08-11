@@ -70,6 +70,17 @@ node <skill-dir>/scripts/export-handoff.mjs validate-map <WORK_DIR> <SEGMENT_ID>
 node <skill-dir>/scripts/export-handoff.mjs validate-map <WORK_DIR> <SEGMENT_ID> --complete <DISPATCH_ID>
 ```
 
+If `--check` reports `MAP_REPAIR_REQUIRED`, the exact ordered `details.issues[]` is the repair
+contract. Apply every named `fieldPath` using its `correctionHint`, change only this private
+candidate, and rerun `--check` on the same dispatch. Do not reinterpret, summarize, or replace the
+issue list with generic retry guidance.
+
+If completion reports `MAP_REPAIR_REQUIRED` and creates an attempt-2 `nextDispatch`, the coordinator
+passes that fresh Worker the exact ordered `details.issues[]` unchanged alongside the dispatch.
+Repair only the named candidate fields for that segment. Other completion diagnostics remain
+bounded and unchanged; do not invent an issue list. Never start a clean Compression Run; never
+replay unrelated MAP Workers, accepted receipts, or other candidates.
+
 Completion preserves the v1 global Claim and relation derivation, derives each global Finding ID
 from its completed Claim ID, resolves inspection coordinates from immutable Progress Evidence, and
 writes one private completed result. The bounded receipt contains raw and completed digests plus
