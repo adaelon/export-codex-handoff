@@ -90,3 +90,12 @@ unrelated MAP retention.
 
 **Done when**: focused tests and the complete Node test suite pass, and architecture/code-trail
 documentation records the earliest-owner boundary.
+
+**Implementation evidence**: `targeted-map-repair-tr4.test.mjs` freezes the three retained failure
+classes as one exact ordered issue list, applies that list to only the named candidate in separate
+same-attempt and attempt-2 workflows, and compares every unrelated manifest segment plus the accepted
+receipt's exact bytes before and after repair. No production runtime file changes in TR4.
+
+**Acceptance evidence**: TR4 passes 2/2; TR1-TR4 plus MAP Worker and Action-ready regressions pass
+37/37; Skill, Markdown-link, and compatibility regressions pass 15/15; the complete Node suite passes
+186/186 with zero skips, and `git diff --check` passes.

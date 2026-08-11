@@ -716,3 +716,13 @@
 
 **Entry point**: On `MAP_REPAIR_REQUIRED`, give the responsible Worker the unchanged ordered issue list and repair only its named candidate fields; on a REDUCE preflight diagnostic, rewrite only `reducedPath`.
 **Test**: Authentic red fails 3/3; TR3 passes 3/3; TR1-TR3 plus MAP Worker and Action-ready regressions pass 35/35; Skill/Markdown/compatibility regressions pass 15/15; the complete Node suite passes 184/184 with zero skips; `git diff --check` passes.
+
+## 2026-08-11 Slice TR4 deterministic targeted MAP acceptance
+
+**Touched**:
+- `skills/export-codex-handoff/tests/targeted-map-repair-tr4.test.mjs:TR4 acceptance matrix` — freezes the exact three-class issue set, drives same-attempt and attempt-2 repair from the returned diagnostics, and verifies unrelated segment state plus accepted receipt bytes remain unchanged.
+- `docs/slice-plan-targeted-map-repair.md:Slice TR4` — records the final implementation and deterministic acceptance evidence.
+- `docs/architecture.md:MAP dispatch flow / Decision index` — records same-dispatch correction, segment-only attempt-2, and unrelated MAP retention at the earliest-owner boundary.
+
+**Entry point**: Run the TR4 test against a continuation-map-v2 progress candidate containing all retained failure classes; use only its ordered `details.issues[]` to repair the responsible candidate.
+**Test**: TR4 passes 2/2; TR1-TR4 plus MAP Worker and Action-ready regressions pass 37/37; Skill/Markdown/compatibility regressions pass 15/15; the complete Node suite passes 186/186 with zero skips; `git diff --check` passes.
