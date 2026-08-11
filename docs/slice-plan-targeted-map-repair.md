@@ -49,6 +49,16 @@ unchanged.
 **Done when**: a corrected candidate completes in the retained workdir and no other dispatch ID,
 receipt digest, or provider observation changes.
 
+**Implementation evidence**: `targeted-map-repair-tr2.test.mjs` drives the existing
+`checkMapDispatch` non-consuming path through same-attempt correction, then separately drives
+`completeMapDispatch` failure through the returned segment-only attempt-2 dispatch. Both paths
+complete and accept the corrected candidate without requiring a production workflow change.
+
+**Acceptance evidence**: the test freezes every unrelated dispatch ID plus one unrelated accepted
+receipt's exact bytes/digest and provider observation's serialized bytes before repair, then proves
+them unchanged after both correction paths. TR1/TR2 plus MAP Worker and Action-ready regressions pass
+32/32; the complete Node suite passes 181/181 with zero skips.
+
 ## Slice TR3 — Operator contract
 
 **Input**: TR1/TR2 runtime behavior.

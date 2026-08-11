@@ -695,3 +695,13 @@
 
 **Entry point**: Run `validate-map <WORK_DIR> <SEGMENT_ID> --check <DISPATCH_ID>`; repair every returned issue in the same private candidate before completion.
 **Test**: The authentic red failed because the invalid candidate was accepted; TR1 passes 1/1, focused MAP/action-ready regression passes 20/20, and the complete Node suite passes 179/179 with zero skips.
+
+## 2026-08-11 Slice TR2 targeted MAP retry workflow
+
+**Touched**:
+- `skills/export-codex-handoff/tests/targeted-map-repair-tr2.test.mjs:TR2 same-attempt and attempt-2 acceptance tests` — completes both targeted correction paths and freezes unrelated dispatch IDs, accepted receipt bytes/digest, and provider observation bytes across repair.
+- `skills/export-codex-handoff/tests/targeted-map-repair-tr2.test.mjs:retainUnrelatedMap / assertUnrelatedMapUnchanged` — creates one accepted, receipt-bound provider observation in the retained workdir and compares its exact immutable state after the target segment completes.
+- `docs/slice-plan-targeted-map-repair.md:Slice TR2` — records that the existing MapDispatch lifecycle closes both repair paths without a production-code change.
+
+**Entry point**: After `validate-map --check` returns `MAP_REPAIR_REQUIRED`, overwrite only that dispatch's candidate and reuse its dispatch ID; after `validate-map --complete` returns the same diagnostic, claim only its returned attempt-2 dispatch.
+**Test**: TR2 passes 2/2; TR1/TR2 plus MAP Worker and Action-ready regressions pass 32/32; the complete Node suite passes 181/181 with zero skips.
