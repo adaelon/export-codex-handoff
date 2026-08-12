@@ -86,14 +86,24 @@ The active Codex task supplies semantic compression. Scripts own evidence discov
 exact source addressing, structural validation, no-overwrite publication, and managed temporary cleanup.
 No script starts another Codex process.
 
-The accepted but not-yet-complete adjudication boundary is specified by
+The accepted adjudication boundary is specified by
 [ADR-0016](./adr/0016-main-codex-adjudication-loop.md) and its
-[ordered slices](./slice-plan-main-codex-adjudication.md). It replaces diagnostic-as-terminal behavior
-only as MA0-MA5 land: immutable requests and decisions form a digest-chained event history; Main Codex
-alone selects bounded repair, responsible-stage regeneration, publication relocation, or explicit
-degradation; and verified normal or degraded publication becomes the only software terminal state.
-Until the corresponding runtime slice is accepted, existing `terminal failure report` passages below
-describe current behavior, not the target authority model.
+[ordered slices](./slice-plan-main-codex-adjudication.md). MA1 is implemented: each new v2 run has an
+immutable root `adjudication-contract.json`; bounded request and decision documents are referenced by
+a numbered digest chain; replay is authoritative; and `adjudicate --inspect|--submit` exposes that
+state without a mutable status file. Existing stage failures are not routed into this substrate until
+MA2, and decisions are not applied until MA3. Therefore existing `terminal failure report` passages
+below still describe current stage behavior, not the final MA0-MA5 authority model.
+
+```text
+v2 prepare -> immutable adjudication-contract.json
+bounded library ingress -> immutable request document -> numbered request_opened event
+adjudicate --inspect -> verify contract + document digests + complete event chain -> replay state
+adjudicate --submit -> exact run/request/digest/action check -> immutable decision document
+                    -> numbered decision_submitted event -> APPLYING_ADJUDICATION
+MA2 pending: existing workflow catches -> bounded library ingress
+MA3 pending: APPLYING_ADJUDICATION -> apply named action
+```
 
 New managed directories are v2 and pair the manifest with an immutable version binding over the
 session, absolute work directory, MAP result mode, reference-projection mode, projection and
@@ -392,6 +402,6 @@ re-runs an indexed workspace observation and fails closed if its source revision
 - **Provider-observation admission and persistence boundary**: [Provider Timing Capability for Multi-Wave MAP](./adr/0014-provider-timing-capability-for-multi-wave-map.md)
 - **Implemented earliest-owner targeted MAP repair (TR1-TR4)**: [Earliest-Owner Targeted MAP Repair](./adr/0015-earliest-owner-targeted-map-repair.md)
 - **Implemented empty-Progress earliest-owner repair (TR5)**: [Targeted MAP repair slices](./slice-plan-targeted-map-repair.md#slice-tr5--empty-progress-map-ownership)
-- **Accepted Main Codex final-adjudication boundary (MA0-MA5 planned)**: [Main Codex Adjudication Loop](./adr/0016-main-codex-adjudication-loop.md)
+- **Implemented Main Codex durable contract/event substrate (MA1; MA2-MA5 planned)**: [Main Codex Adjudication Loop](./adr/0016-main-codex-adjudication-loop.md)
 
 - **Implemented version routing and transactional publication**: [Evidence-preserving compression slice plan](./slice-plan-evidence-preserving-compression.md#slice-6-transactional-publication-compatibility-and-end-to-end-evaluation)

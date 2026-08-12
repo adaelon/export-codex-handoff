@@ -758,3 +758,15 @@
 
 **Entry point**: Start MA1 by writing red tests for immutable request replay, digest-chained event integrity, strict decision binding, and `adjudicate --inspect|--submit`; do not route stage failures or apply decisions in MA1.
 **Test**: MA0 passes 1/1; the complete pre-MA1 suite passes 189/189 with zero skips; `git diff --check` passes. No executable workflow file changed.
+
+## 2026-08-12 Slice MA1 durable request, event chain, and CLI
+
+**Touched**:
+- `skills/export-codex-handoff/scripts/lib/adjudication.mjs:initializeAdjudicationContract / createAdjudicationRequest / inspectAdjudication / submitAdjudicationDecision` — owns the immutable run contract, evidence-safe documents, digest-chain replay, and exact decision transition.
+- `skills/export-codex-handoff/scripts/lib/task-workflow-core.mjs:prepareCompressionTask` and `scripts/lib/task-workflow.mjs:adjudication exports` — create the immutable contract for every new v2 managed run and expose its library surface without routing existing failures.
+- `skills/export-codex-handoff/scripts/export-handoff.mjs:adjudicate dispatch` — exposes bounded read-only inspection and decision-file submission.
+- `skills/export-codex-handoff/tests/main-codex-adjudication-ma1.test.mjs:MA1 contract/replay/binding/CLI fixtures` — covers private-field rejection, byte stability, chain faults, no-write invalid decisions, and the named applying transition.
+- `docs/slice-plan-main-codex-adjudication.md:Slice MA1` and `docs/architecture.md:adjudication boundary / Decision index` — record the implemented substrate and retain MA2-MA5 exclusions.
+
+**Entry point**: Use `adjudicate <WORK_DIR> --inspect`; submit one exact active-request binding with `--submit <DECISION_FILE>`. Stage-failure routing and decision application remain unavailable until MA2/MA3.
+**Test**: Authentic red failed 0/7 on the missing MA1 boundary; focused MA1 passes 7/7 and related MA0/Compression/MAP regressions pass 28/28. The isolated staged MA1 snapshot passes 195/195; the coexisting worktree with preserved uncommitted TR6 passes 196/196; both have zero skips.

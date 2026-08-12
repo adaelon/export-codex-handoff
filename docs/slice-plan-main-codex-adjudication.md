@@ -115,6 +115,18 @@ evidence, event chains detect deletion/reordering/mutation, decisions bind the e
 and one allowed action, invalid or stale decisions leave the active request and ledger unchanged, and
 a valid decision transitions only its named request to `APPLYING_ADJUDICATION`.
 
+**Implementation evidence**: every new v2 `prepare` writes one root
+`adjudication-contract.json` bound to the exact managed run. `adjudication.mjs` accepts only the
+bounded request schema, stores immutable request/decision documents, appends digest-linked numbered
+events, reconstructs state exclusively from those events, and rejects orphaned, missing, reordered,
+or mutated history. `adjudicate --inspect` is read-only; `--submit` accepts one bounded decision file
+and records only an exact active-request/action binding. Existing stage failures remain unrouted.
+
+**Acceptance evidence**: the authentic MA1 red failed 0/7 only because the contract, library API,
+event replay, and CLI command were absent. MA1 then passes 7/7; MA0/MA1, Compression Task, and MAP
+Worker regressions pass 28/28. The isolated staged MA1 snapshot passes 195/195 with zero skips; the
+coexisting worktree, including the preserved uncommitted TR6 test, passes 196/196 with zero skips.
+
 ## Slice MA2 — All-stage capture and run gating
 
 **Input**: the MA1 contract plus every post-prepare workflow command and diagnostic owner in MA0.

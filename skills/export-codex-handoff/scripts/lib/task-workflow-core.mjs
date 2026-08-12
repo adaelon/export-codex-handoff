@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { initializeAdjudicationContract } from "./adjudication.mjs";
 import { buildEvidencePack } from "./evidence-pack.mjs";
 import { canonicalStringify, sha256Text } from "./evidence-addressing.mjs";
 import {
@@ -1681,6 +1682,7 @@ export async function prepareCompressionTask(options, dependencies = {}) {
       ...(frameContractVersion ? { frameContractVersion } : {}),
     }, { exclusive: true });
     await writeJson(path.join(workDir, MANIFEST_FILE), manifest, { exclusive: true });
+    const adjudicationContract = await initializeAdjudicationContract(manifest);
 
     return {
       formatVersion: manifest.formatVersion,
@@ -1710,6 +1712,7 @@ export async function prepareCompressionTask(options, dependencies = {}) {
       reduceInputPath: paths.reduceInput,
       reducedPath: paths.reduced,
       failureReportPath: paths.failureReport,
+      ...adjudicationContract,
     };
   } catch (error) {
     const provisional = { managedWorkDir: true, workRoot, workDir };

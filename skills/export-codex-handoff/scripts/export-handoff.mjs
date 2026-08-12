@@ -3,6 +3,10 @@
 import fs from "node:fs";
 
 import {
+  inspectAdjudication,
+  submitAdjudicationDecision,
+} from "./lib/adjudication.mjs";
+import {
   retrieveEvidenceFromFile,
   verifyEvidenceIndexFile,
 } from "./lib/evidence-index.mjs";
@@ -35,6 +39,8 @@ function usage() {
   node export-handoff.mjs prepare-reduce <WORK_DIR>
   node export-handoff.mjs validate-reduce <WORK_DIR> --check
   node export-handoff.mjs publish <WORK_DIR> [--keep-workdir]
+  node export-handoff.mjs adjudicate <WORK_DIR> --inspect
+  node export-handoff.mjs adjudicate <WORK_DIR> --submit <DECISION_FILE>
   node export-handoff.mjs retrieve <EVIDENCE_INDEX> <ANCHOR_ID>
   node export-handoff.mjs verify-evidence <EVIDENCE_INDEX>
 
@@ -165,6 +171,21 @@ function parseScheduleMapAction(args) {
   };
 }
 
+function parseAdjudicationAction(args) {
+  const workDir = requirePositional(args, 0, "WORK_DIR");
+  if (args.length === 2 && args[1] === "--inspect") {
+    return { action: "inspect", workDir };
+  }
+  if (args.length === 3 && args[1] === "--submit") {
+    return {
+      action: "submit",
+      workDir,
+      decisionPath: requirePositional(args, 2, "DECISION_FILE"),
+    };
+  }
+  throw new Error("adjudicate requires --inspect or --submit <DECISION_FILE>");
+}
+
 async function readBoundedObservationDocument(target) {
   const handle = await fs.promises.open(target, "r");
   try {
@@ -188,6 +209,34 @@ async function readBoundedObservationDocument(target) {
         throw new ExportHandoffError(
           "INVALID_MAP_GENERATION_OBSERVATION_DOCUMENT",
           "Provider observation document must contain exactly one JSON value",
+        );
+      }
+      throw error;
+    }
+  } finally {
+    await handle.close();
+  }
+}
+
+async function readBoundedDecisionDocument(target) {
+  const maximumBytes = 32_768;
+  const handle = await fs.promises.open(target, "r");
+  try {
+    const buffer = Buffer.alloc(maximumBytes + 1);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    if (bytesRead > maximumBytes) {
+      throw new ExportHandoffError(
+        "ADJUDICATION_DECISION_TOO_LARGE",
+        `Adjudication Decision document exceeds ${maximumBytes} bytes`,
+      );
+    }
+    try {
+      return JSON.parse(buffer.subarray(0, bytesRead).toString("utf8"));
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        throw new ExportHandoffError(
+          "INVALID_ADJUDICATION_DECISION_DOCUMENT",
+          "Adjudication Decision document must contain exactly one JSON value",
         );
       }
       throw error;
@@ -255,6 +304,14 @@ async function dispatch(command, args) {
     const unknown = args.slice(1).filter((item) => item !== "--keep-workdir");
     if (unknown.length) throw new Error(`Unknown option: ${unknown[0]}`);
     return publishHandoff(workDir, { keepWorkdir: args.includes("--keep-workdir") });
+  }
+  if (command === "adjudicate") {
+    const action = parseAdjudicationAction(args);
+    if (action.action === "inspect") return inspectAdjudication(action.workDir);
+    return submitAdjudicationDecision(
+      action.workDir,
+      await readBoundedDecisionDocument(action.decisionPath),
+    );
   }
   if (command === "retrieve") {
     return retrieveEvidenceFromFile(

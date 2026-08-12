@@ -5,6 +5,12 @@ import {
 } from "./task-workflow-core.mjs";
 
 export {
+  createAdjudicationRequest,
+  inspectAdjudication,
+  submitAdjudicationDecision,
+} from "./adjudication.mjs";
+
+export {
   acceptMapReceipt,
   checkMapDispatch,
   checkReduceStage,

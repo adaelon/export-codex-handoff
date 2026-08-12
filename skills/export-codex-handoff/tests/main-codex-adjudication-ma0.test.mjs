@@ -87,7 +87,7 @@ async function writeJson(target, value) {
   await fs.promises.writeFile(target, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
-test("MA0 authentic pre-dispatch failure has a terminal report but no adjudication state", async () => {
+test("MA0 pre-dispatch failure remains unrouted after MA1 contract initialization", async () => {
   const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "codex-ma0-adjudication-gap-"));
   try {
     const prepared = await prepareCompressionTask({
@@ -124,6 +124,11 @@ test("MA0 authentic pre-dispatch failure has a terminal report but no adjudicati
     assert.equal(report.kind, "codex-handoff-terminal-failure");
     assert.equal(report.phase, "pre-dispatch");
     assert.equal(report.diagnostic.code, "LIVE_BUDGET_UNREACHABLE");
+    const contract = JSON.parse(await fs.promises.readFile(
+      prepared.adjudicationContractPath,
+      "utf8",
+    ));
+    assert.equal(contract.kind, "codex-handoff-adjudication-contract");
     await assert.rejects(
       fs.promises.access(path.join(prepared.workDir, "adjudication")),
       { code: "ENOENT" },
