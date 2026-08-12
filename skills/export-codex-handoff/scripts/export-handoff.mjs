@@ -43,6 +43,7 @@ function usage() {
   node export-handoff.mjs validate-reduce <WORK_DIR> --check
   node export-handoff.mjs publish <WORK_DIR> [--keep-workdir]
   node export-handoff.mjs adjudicate <WORK_DIR> --inspect
+  node export-handoff.mjs adjudicate <WORK_DIR> --capture <DIAGNOSTIC_CODE>
   node export-handoff.mjs adjudicate <WORK_DIR> --submit <DECISION_FILE>
   node export-handoff.mjs adjudicate <WORK_DIR> --apply
   node export-handoff.mjs retrieve <EVIDENCE_INDEX> <ANCHOR_ID>
@@ -63,8 +64,8 @@ Prepare options:
 
 Provider timing for multi-wave MAP:
   1. Observe fresh dedicated slots and ProviderTimingCapability before any Worker claim.
-  2. If timing is unavailable for a structurally multi-wave run, stop with
-     PROVIDER_TIMING_UNAVAILABLE and zero admitted dispatches.
+  2. If slots or timing are unavailable before the first Worker claim, capture the exact
+     MAP_WORKER_UNAVAILABLE or PROVIDER_TIMING_UNAVAILABLE diagnostic for adjudication.
   3. After accepting each admitted Worker receipt, use record-map-metric with
      provider-reported latency only.
   4. Before a later wave, observe fresh slots again and use schedule-map.
@@ -190,7 +191,41 @@ function parseAdjudicationAction(args) {
       decisionPath: requirePositional(args, 2, "DECISION_FILE"),
     };
   }
-  throw new Error("adjudicate requires --inspect, --submit <DECISION_FILE>, or --apply");
+  if (args.length === 3 && args[1] === "--capture") {
+    return {
+      action: "capture",
+      workDir,
+      diagnosticCode: requirePositional(args, 2, "DIAGNOSTIC_CODE"),
+    };
+  }
+  throw new Error(
+    "adjudicate requires --inspect, --capture <DIAGNOSTIC_CODE>, --submit <DECISION_FILE>, or --apply",
+  );
+}
+
+const OPERATOR_CAPTURE_DIAGNOSTICS = Object.freeze({
+  MAP_WORKER_UNAVAILABLE: Object.freeze({
+    phase: "schedule-map",
+    message: "No fresh dedicated MAP Worker slot is available before dispatch",
+    context: Object.freeze({ availableSlots: 0 }),
+  }),
+  PROVIDER_TIMING_UNAVAILABLE: Object.freeze({
+    phase: "schedule-map",
+    message:
+      "The execution surface exposes no provider timing capability required before first-wave dispatch",
+    context: Object.freeze({}),
+  }),
+});
+
+function operatorCaptureSpec(code) {
+  const spec = OPERATOR_CAPTURE_DIAGNOSTICS[code];
+  if (!spec) {
+    throw new ExportHandoffError(
+      "INVALID_ADJUDICATION_CAPTURE",
+      "Only MAP_WORKER_UNAVAILABLE or PROVIDER_TIMING_UNAVAILABLE may enter through --capture",
+    );
+  }
+  return spec;
 }
 
 async function readBoundedObservationDocument(target) {
@@ -387,6 +422,15 @@ async function dispatch(command, args) {
     const action = parseAdjudicationAction(args);
     if (action.action === "inspect") return inspectAdjudication(action.workDir);
     if (action.action === "apply") return applyAdjudicationDecision(action.workDir);
+    if (action.action === "capture") {
+      const spec = operatorCaptureSpec(action.diagnosticCode);
+      return captureAdjudicationFailure(
+        action.workDir,
+        spec.phase,
+        new ExportHandoffError(action.diagnosticCode, spec.message),
+        spec.context,
+      );
+    }
     return submitAdjudicationDecision(
       action.workDir,
       await readBoundedDecisionDocument(action.decisionPath),

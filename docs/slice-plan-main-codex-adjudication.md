@@ -239,6 +239,26 @@ fault-injection and complete suites pass; repository and installed packages matc
 acceptance produces a final normal or explicit Degraded Handoff plus a valid Evidence Index from one
 Compression Run, with every Main Codex decision and unresolved item auditable.
 
+**Implementation evidence**: `SKILL.md` now wraps every post-prepare managed command in an explicit
+Main Codex `inspect -> decide -> submit -> apply -> resume` loop and selects `publish_degraded` when
+a correction is unproven, repeated without new evidence, exhausted, or blocked by capacity/timing.
+The bounded `adjudicate --capture` CLI ingress admits only the pre-worker
+`MAP_WORKER_UNAVAILABLE` / `PROVIDER_TIMING_UNAVAILABLE` observations that do not already cross a
+managed command boundary. `adjudication.mjs` preserves the exact sanitized `MAP_REPAIR_REQUIRED`
+issue list inside the immutable request while keeping private evidence out. The v2 Worker contract
+returns candidate diagnostics to Main Codex rather than choosing a run-level action or asking the
+user. MA1-MA4 runtime authority and the physical-failure exclusions remain unchanged.
+
+**Acceptance evidence**: `main-codex-adjudication-ma5.test.mjs` covers the operator contract,
+allowlisted pre-worker capture, rejection of an unbounded capture code, exact evidence-safe repair
+issues, same-run retry/resume/repeated-diagnostic degradation, `PUBLISHED` replay, Evidence Index
+verification, and installed-package comparison. The focused MA5/TR3 contract set passes 9/9 and the
+complete Node suite passes 251/251 with zero skips. Repository and installed packages match at 87/87
+files with digest `sha256:01f4634e79612ac446ffac73f72d2c65c0195a4062b1c331dc410cbd952e3d8f`.
+The [fresh installed-Skill acceptance](./main-codex-adjudication-live-acceptance.md) captures
+`MAP_WORKER_UNAVAILABLE`, selects `publish_degraded`, and reaches auditable `PUBLISHED` in the same
+run with a valid 1/1-anchor Evidence Index.
+
 ## Slice order and stop rules
 
 `MA0 -> MA1 -> MA2 -> MA3 -> MA4 -> MA5` is strict. Each slice begins from a green complete suite,

@@ -14,6 +14,76 @@ Use the invoking Codex task as the dedicated Compression Task. Keep it separate 
 3. Require one Source Thread UUID. Ask only when it is missing.
 4. Use a user-supplied output path; otherwise publish `handoff-<UUID>.md` and `handoff-<UUID>.evidence.json` in the current directory.
 
+## Main Codex adjudication loop
+
+After `prepare` returns a durable `workDir`, a Captured Workflow Diagnostic is a resumable state,
+not a terminal export result. Main Codex owns every Adjudication Decision and must never ask the user to adjudicate an internal workflow diagnostic. Continue the same Compression Run until a
+normal Handoff pair publishes or an exact `publish_degraded` decision publishes a Degraded Handoff
+pair. Never start a clean Compression Run as recovery.
+
+Use this loop around every managed command after `prepare`:
+
+```text
+lifecycleState = "RUNNING"
+currentCommand = next workflow command
+while lifecycleState != "PUBLISHED":
+    result = run currentCommand
+    if currentCommand is publish and result verifies both public artifacts:
+        lifecycleState = "PUBLISHED"
+        break
+    if result succeeded:
+        currentCommand = next workflow command
+        continue
+
+    if result.details.adjudication is absent:
+        fail only at a documented physical boundary outside the software guarantee
+
+    state = run adjudicate <WORK_DIR> --inspect
+    request = state.activeRequest
+    decision = choose one request.allowedActions from verified evidence
+    write a bounded decision that binds state.runId, requestId, and requestDigest
+    run adjudicate <WORK_DIR> --submit <DECISION_FILE>
+    applied = run adjudicate <WORK_DIR> --apply
+
+    if applied.lifecycleState == "RUNNING":
+        currentCommand = applied.result.resume.command
+    else if applied.lifecycleState == "AWAITING_ADJUDICATION":
+        continue  # inspect the linked successor; do not report terminal failure
+    else if applied.lifecycleState == "PUBLISHED":
+        lifecycleState = "PUBLISHED"
+```
+
+Run the commands through the packaged CLI:
+
+```text
+node <skill-dir>/scripts/export-handoff.mjs adjudicate <WORK_DIR> --inspect
+node <skill-dir>/scripts/export-handoff.mjs adjudicate <WORK_DIR> --capture <DIAGNOSTIC_CODE>
+node <skill-dir>/scripts/export-handoff.mjs adjudicate <WORK_DIR> --submit <DECISION_FILE>
+node <skill-dir>/scripts/export-handoff.mjs adjudicate <WORK_DIR> --apply
+```
+
+`--capture` is restricted to the two pre-worker execution-surface observations that do not already
+cross a managed CLI boundary: `MAP_WORKER_UNAVAILABLE` and `PROVIDER_TIMING_UNAVAILABLE`. Every
+other managed command failure already returns `details.adjudication`; inspect that request instead
+of capturing a duplicate.
+
+Choose the decision from evidence, not from a fixed retry order:
+
+- `retry_stage`: only after correcting the named mutable input/candidate without changing accepted
+  evidence; resume only `applied.result.resume.command`.
+- `regenerate_stage`: only when the request identifies the responsible authored generation and the
+  immutable contract permits supersession.
+- `relocate_publication`: only for a publication-path defect and only to a fresh absent pair.
+- `publish_degraded`: choose `publish_degraded` whenever reliable repair cannot be proven, the same
+  phase/code repeats without new corrective evidence, an attempt is exhausted, or required
+  capacity/timing remains unavailable.
+
+Do not repeat the same repair or regeneration for the same phase/code unless new evidence identifies
+a different bounded correction. Invalid decisions leave the request active; failed applications
+create one linked successor that Main Codex inspects immediately. Process termination, machine loss,
+loss of the coordinator, and absence of every writable publication target remain the only physical
+boundaries outside this software loop.
+
 ## Workflow
 
 Resolve `<skill-dir>` to this skill folder. Run helper commands yourself; do not ask the user to operate a separate CLI.
@@ -71,16 +141,18 @@ Resolve `<skill-dir>` to this skill folder. Run helper commands yourself; do not
    `chunkPath` or write its `summaryPath`.
 
    - Immediately before each dispatch wave, inspect the currently available dedicated worker slots.
-     Dispatch no more workers than the fresh slot count. If no slot is available, return
-     `needs-user` with `MAP_WORKER_UNAVAILABLE`; never read evidence sequentially in the coordinator.
+     Dispatch no more workers than the fresh slot count. If no slot is available before the first
+     claim, capture `MAP_WORKER_UNAVAILABLE` with `adjudicate --capture`, then enter the Main Codex
+     adjudication loop; never read evidence sequentially in the coordinator.
    - Before any Worker claim, pass the pending dispatches and fresh slot count through the exported
      `scheduleMapDispatches`. If all dispatches fit, the structurally single-wave run remains
      compatible and does not require provider timing. If dispatches remain, supply an exact
      `ProviderTimingCapability` observed from the current execution surface. Only
      `{ available: true, source: "provider", observationPoint: "post_worker", reasonCode: null }`
      admits the first wave. A known unsupported or non-correlatable surface must supply the exact
-     unavailable variant and stop with `PROVIDER_TIMING_UNAVAILABLE`, zero admitted dispatches, and
-     no Worker creation or claim. Never infer capability from model identity or clocks.
+     unavailable variant, keep zero admitted dispatches and no Worker claim, capture
+     `PROVIDER_TIMING_UNAVAILABLE` with `adjudicate --capture`, and enter Main Codex Adjudication.
+     Never infer capability from model identity or clocks.
    - Give exactly one complete packed `MapDispatch` from the admitted first-wave result to each fresh
      worker. The worker must first claim it:
 
@@ -120,10 +192,12 @@ Resolve `<skill-dir>` to this skill folder. Run helper commands yourself; do not
      node <skill-dir>/scripts/export-handoff.mjs validate-map <workDir> <segmentId> --check <dispatchId>
      ```
 
-     If it reports `MAP_REPAIR_REQUIRED`, pass the exact ordered `details.issues[]` unchanged to the
-     responsible Worker. Apply only the named `fieldPath` / `correctionHint` repairs, preserve
-     evidence semantics, and rerun `--check` on the same dispatch. Never replace the issue list with
-     generic retry guidance. Never start a clean Compression Run; never replay unrelated MAP Workers.
+     If it reports `MAP_REPAIR_REQUIRED`, the managed CLI captures the exact ordered `details.issues[]` unchanged
+     in the active Adjudication Request. Inspect it, choose `retry_stage` only when
+     every named correction preserves evidence semantics, submit and apply that decision, then pass
+     the issue list unchanged to the responsible Worker before running `resume.command` on the same dispatch.
+     Never replace the issue list with generic retry guidance. Never start a clean
+     Compression Run; never replay unrelated MAP Workers.
    - The worker completes its dispatch and returns only the bounded receipt:
 
      ```text
@@ -142,8 +216,9 @@ Resolve `<skill-dir>` to this skill folder. Run helper commands yourself; do not
      to a fresh isolated Worker and pass the exact ordered `details.issues[]` unchanged alongside
      it. Repair only that dispatch's private candidate; do not reopen accepted receipts or other
      segments. For any other first failure that returns a `nextDispatch`, pass that dispatch and its
-     bounded diagnostic unchanged to a fresh isolated Worker. On `MAP_WORKER_EXHAUSTED`, stop and
-     report the retained diagnostics and `workDir`.
+     bounded diagnostic unchanged to a fresh isolated Worker. `MAP_WORKER_EXHAUSTED` is captured by
+     the managed completion command; inspect it and choose a different lawful correction or explicit
+     degradation instead of terminating the Compression Run.
    - After accepting each admitted receipt on a supported surface, take the provider-reported
      post-worker observation exposed for that exact Worker turn and write the strict nine-field
      `MapGenerationObservation`. Record it through the separate bounded ingress:
@@ -166,9 +241,9 @@ Resolve `<skill-dir>` to this skill folder. Run helper commands yourself; do not
      It verifies one receipt-bound provider observation and exact workflow durations for every
      accepted admitted dispatch, then invokes the exported deterministic `projectFirstWaveBudget`
      with the existing conservative REDUCE/publication reserves. Dispatch only its returned
-     `dispatches`. Stop without retry or publication on `INCOMPLETE_FIRST_WAVE_METRICS`,
-     `MAP_WORKER_UNAVAILABLE`, or `LIVE_BUDGET_UNREACHABLE`; do not hand-estimate, call the projector
-     directly, or reuse an earlier slot count.
+     `dispatches`. The managed command captures `INCOMPLETE_FIRST_WAVE_METRICS`,
+     `MAP_WORKER_UNAVAILABLE`, or `LIVE_BUDGET_UNREACHABLE`; enter the Main Codex adjudication loop,
+     do not hand-estimate, call the projector directly, or reuse an earlier slot count.
    - New runs return no parent aggregate dispatch. After every child receipt is accepted, the
      deterministic workflow folds ordered fragment coverage and existing claims into one parent
      turn without semantic rewriting; a Claim spanning multiple fragments is referenced once in
@@ -197,10 +272,12 @@ Resolve `<skill-dir>` to this skill folder. Run helper commands yourself; do not
    node <skill-dir>/scripts/export-handoff.mjs validate-reduce <workDir> --check
    ```
 
-   Treat a deterministic diagnostic reported here as REDUCE-owned: rewrite only `reducedPath` and
-   rerun the `validate-reduce` preflight without changing accepted Claims. A REDUCE-owned failure
-   must not create a MAP attempt-2 dispatch or replay a MAP Worker, and it never starts a clean
-   Compression Run. For
+   Treat a deterministic diagnostic reported here as REDUCE-owned. After Main Codex applies
+   `retry_stage`, rewrite only `reducedPath` and rerun the `validate-reduce` preflight without
+   changing accepted Claims. The managed CLI captures the diagnostic; inspect the request and
+   select `retry_stage` only when that correction is bounded to `reducedPath`, then run its exact
+   `resume.command`. A REDUCE-owned failure must not create a MAP attempt-2 dispatch or replay a MAP Worker,
+   and it never starts a clean Compression Run. For
    `continuation-map-v2`, the check also enforces task-profile Actionability and deterministic Hot
    Context reachability, returning `HANDOFF_NOT_ACTIONABLE` or `HANDOFF_LOW_VALUE` before digest
    binding when the candidate cannot safely continue. The check binds the exact serialized
@@ -219,11 +296,12 @@ Resolve `<skill-dir>` to this skill folder. Run helper commands yourself; do not
 
    v2 publication re-verifies the current Source Thread revision and both configured output budgets
    before either public file appears. It creates the Handoff and Evidence Index as one exclusive
-   transaction; a second-file failure rolls back only the first file from that attempt. If
-   publication reports `OUTPUT_TOO_LARGE`, tighten `reducedPath` once by removing narrative before
-   continuation-critical facts, then retry. If it reports `EVIDENCE_INDEX_TOO_LARGE`, increase the
-   explicit `--index-chars` budget only when the compact index is expected and still contains no raw
-   bodies. On any other failure, stop and report the exact JSON diagnostic. Never present a partial
+   transaction; a second-file failure rolls back only the first file from that attempt. Every
+   publication diagnostic enters the Main Codex adjudication loop. For `OUTPUT_TOO_LARGE`, choose
+   `retry_stage` only when removing bounded narrative from `reducedPath` preserves every
+   continuation-critical fact; otherwise choose `publish_degraded`. Use `relocate_publication` only
+   for fresh absent targets. An immutable Evidence Index budget, repeated publication diagnostic, or
+   unproven correction requires explicit degradation rather than a clean run. Never present a partial
    Handoff as success. Existing v1 work directories stay on their legacy path and are never upgraded.
 
 9. Verify the published Evidence Index after every successful publication:
@@ -241,11 +319,11 @@ Resolve `<skill-dir>` to this skill folder. Run helper commands yourself; do not
    Anchor coverage, no contract-shape retry, output at most 40,000 characters, successful
    `verify-evidence`, and `phaseTimingsMs.total <= 600000`.
 
-   If a fresh structurally multi-wave acceptance surface exposes no durable provider-reported
-   per-worker generation duration correlated with one immutable MapDispatch, report that exact
-   external capability blocker and the fail-early `PROVIDER_TIMING_UNAVAILABLE` result. Do not launch
-   semantic MAP work, reuse an old work directory, substitute another clock, or present single-wave
-   compatibility as multi-wave live success.
+   If a fresh structurally multi-wave surface exposes no durable provider-reported per-worker
+   generation duration correlated with one immutable MapDispatch, capture
+   `PROVIDER_TIMING_UNAVAILABLE` before semantic work and let Main Codex choose explicit degradation.
+   Do not reuse an old work directory, substitute another clock, or present single-wave compatibility
+   as multi-wave live success.
 
 11. For action-ready live acceptance, use a separate fresh continuation task; the Compression Task
     must not consume its own artifact. Give the continuation task the published Handoff path and the
@@ -265,7 +343,8 @@ Resolve `<skill-dir>` to this skill folder. Run helper commands yourself; do not
 - Never accept a continuation candidate above its immutable dispatch MAP-output budget.
 - Never infer worker capacity from an earlier wave; observe dedicated slots immediately before dispatch.
 - Never claim or create a Worker for a structurally multi-wave run after ProviderTimingCapability
-  reports unavailable; return `PROVIDER_TIMING_UNAVAILABLE` with zero admitted dispatches.
+  reports unavailable; keep zero admitted dispatches and capture `PROVIDER_TIMING_UNAVAILABLE` for
+  Main Codex Adjudication.
 - Never fall back to coordinator-side sequential MAP when no isolated worker slot is available.
 - Require an atomic MapDispatch claim and bounded validated MapReceipt before accepting a summary.
 - Preserve every Critical Anchor through exact continuation coverage; keep all other anchors retrievable
@@ -285,7 +364,8 @@ Resolve `<skill-dir>` to this skill folder. Run helper commands yourself; do not
 - Never treat a Tool Receipt preview as proof that omitted source content is absent.
 - Exclude encrypted reasoning, token statistics, duplicate events, and framework messages.
 - Never overwrite an existing Handoff or Evidence Index without explicit user authorization.
-- Never combine a v1 manifest with a v2 workflow binding; stop on `WORKFLOW_VERSION_MISMATCH`.
+- Never combine a v1 manifest with a v2 workflow binding; after durable `prepare`, route
+  `WORKFLOW_VERSION_MISMATCH` through Main Codex Adjudication.
 - Never publish v2 output after the Source Thread revision changes or either output exceeds budget.
 - Never publish a continuation result before `validate-reduce --check` binds its exact digest.
 - Never route `continuation-map-v2` through the legacy renderer or omit its integrity-covered

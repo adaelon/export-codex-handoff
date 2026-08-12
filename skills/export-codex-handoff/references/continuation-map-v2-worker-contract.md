@@ -64,6 +64,20 @@ their Critical Anchors through the unchanged continuation Claim contract. Do not
 IDs, Finding IDs, Evidence Anchor strings, REDUCE fields, raw Progress Evidence outside its private
 chunk, or prose outside the JSON object.
 
+## Coordinator handback and adjudication
+
+The Worker owns only its private candidate. It returns a contract-valid `MapReceipt` or the exact
+bounded diagnostic emitted by deterministic check/completion; it never chooses a run-level repair,
+regeneration, or degradation action. A Captured Workflow Diagnostic enters Main Codex Adjudication
+in the same Compression Run. The coordinator must persist the exact evidence-safe `issues[]` in the
+active Adjudication Request, and must not ask the user to choose the repair action.
+
+After Main Codex applies `retry_stage`, the coordinator passes the request's ordered `issues[]`
+unchanged to the responsible Worker and resumes only the recorded command. If a correction cannot
+be proven from those issues, the diagnostic repeats without new corrective evidence, or attempts are
+exhausted, Main Codex selects a different allowed action or `publish_degraded`; no Worker starts a
+clean Compression Run or replays an unrelated dispatch.
+
 ## Deterministic completion
 
 Run the non-consuming check and completion in order:

@@ -808,3 +808,17 @@
 
 **Entry point**: Submit one exact active `publish_degraded` decision, then run `adjudicate <WORK_DIR> --apply`; consume the published degraded pair or repair the single linked successor after transactional failure.
 **Test**: MA4 passes 7/7; the coexisting complete Node suite passes 245/245 with zero skips; failed pair publication leaves no attempt-owned output and activates exactly one linked successor.
+
+## 2026-08-12 Slice MA5 operator contract and end-to-end guarantee
+
+**Touched**:
+- `skills/export-codex-handoff/SKILL.md:Main Codex adjudication loop / Workflow` — makes every captured post-prepare diagnostic resumable and assigns inspect, decide, submit, apply, resume, and explicit degradation to Main Codex.
+- `skills/export-codex-handoff/references/continuation-map-v2-worker-contract.md:Coordinator handback and adjudication` — returns exact bounded diagnostics to the coordinator without user adjudication or clean-run recovery.
+- `skills/export-codex-handoff/scripts/export-handoff.mjs:adjudicate --capture` — admits only the two pre-worker capacity/timing diagnostics through a bounded CLI ingress.
+- `skills/export-codex-handoff/scripts/lib/adjudication.mjs:safeDiagnostic / request replay` — persists the exact sanitized MAP repair issue list in the immutable request and public error handback.
+- `skills/export-codex-handoff/tests/main-codex-adjudication-ma5.test.mjs:operator/fault/package matrix` — covers contract text, capture allowlist, issue fidelity, same-run retry/degradation, terminal replay, installed-package parity, and optional retained acceptance artifacts.
+- `docs/main-codex-adjudication-live-acceptance.md:Fresh installed-Skill run` — records the retained Handoff/Index/workDir, immutable IDs and digests, verification, package, and suite evidence.
+- `docs/slice-plan-main-codex-adjudication.md:Slice MA5` and `docs/architecture.md:adjudication flow` — close MA5 with the implemented operator boundary and acceptance index.
+
+**Entry point**: Inspect the exact active request, submit one evidence-bounded allowed action, apply it, and run only `result.resume.command`; select `publish_degraded` when correction is unproven or repeats without new evidence.
+**Test**: MA5 plus retained TR3 contracts pass 9/9; the isolated MA5 Git-index snapshot passes 250/250 and the TR6-coexisting worktree passes 251/251, both with zero skips. Repository and installed packages match at 87/87 files with digest `sha256:01f4634e79612ac446ffac73f72d2c65c0195a4062b1c331dc410cbd952e3d8f`. Fresh installed-Skill acceptance reaches same-run `PUBLISHED` through `MAP_WORKER_UNAVAILABLE -> publish_degraded`, and `verify-evidence` validates 1/1 retained anchor.

@@ -250,10 +250,14 @@ function publicAdjudicationReference(state) {
 }
 
 export function throwCapturedAdjudication(error, state) {
+  const diagnostic = safeDiagnostic(error);
   throw new ExportHandoffError(
     error?.code || "ERROR",
     error?.message || String(error),
-    { adjudication: publicAdjudicationReference(state) },
+    {
+      ...(diagnostic.issues ? { issues: structuredClone(diagnostic.issues) } : {}),
+      adjudication: publicAdjudicationReference(state),
+    },
   );
 }
 
@@ -558,6 +562,47 @@ function validateNamedScalarMap(value, options) {
   return value;
 }
 
+function validateDiagnostic(diagnostic, code, label) {
+  requirePlainObject(diagnostic, code, label);
+  const hasIssues = Object.hasOwn(diagnostic, "issues");
+  requireExactKeys(
+    diagnostic,
+    ["code", "message", ...(hasIssues ? ["issues"] : [])],
+    code,
+    label,
+  );
+  requireToken(diagnostic.code, code, `${label}.code`);
+  requireString(diagnostic.message, 1024, code, `${label}.message`);
+  if (!hasIssues) return diagnostic;
+  if (
+    diagnostic.code !== "MAP_REPAIR_REQUIRED" ||
+    !Array.isArray(diagnostic.issues) ||
+    diagnostic.issues.length < 1 ||
+    diagnostic.issues.length > 8
+  ) {
+    fail(code, `${label}.issues must be a bounded MAP repair issue list`);
+  }
+  diagnostic.issues.forEach((issue, index) => {
+    const issueLabel = `${label}.issues[${index}]`;
+    requireExactKeys(
+      issue,
+      ["code", "fieldPath", "message", "correctionHint"],
+      code,
+      issueLabel,
+    );
+    requireToken(issue.code, code, `${issueLabel}.code`);
+    requireString(issue.fieldPath, 256, code, `${issueLabel}.fieldPath`);
+    requireString(issue.message, 512, code, `${issueLabel}.message`);
+    requireString(
+      issue.correctionHint,
+      512,
+      code,
+      `${issueLabel}.correctionHint`,
+    );
+  });
+  return diagnostic;
+}
+
 function validateRequestInput(input) {
   const code = "INVALID_ADJUDICATION_REQUEST";
   const expectedKeys = [
@@ -573,9 +618,7 @@ function validateRequestInput(input) {
   requireExactKeys(input, expectedKeys, code, "Adjudication Request input");
   requireToken(input.phase, code, "phase");
   requireString(input.failureOwner, 128, code, "failureOwner");
-  requireExactKeys(input.diagnostic, ["code", "message"], code, "diagnostic");
-  requireToken(input.diagnostic.code, code, "diagnostic.code");
-  requireString(input.diagnostic.message, 1024, code, "diagnostic.message");
+  validateDiagnostic(input.diagnostic, code, "diagnostic");
   requireExactKeys(input.artifact, ["kind", "coordinates"], code, "artifact");
   requireToken(input.artifact.kind, code, "artifact.kind");
   validateNamedScalarMap(input.artifact.coordinates, {
@@ -858,19 +901,7 @@ function validateApplicationDocument(application, context) {
   if (success) {
     validateApplicationValue(application.result, code, "application.result");
   } else {
-    requireExactKeys(
-      application.diagnostic,
-      ["code", "message"],
-      code,
-      "application.diagnostic",
-    );
-    requireToken(application.diagnostic.code, code, "application.diagnostic.code");
-    requireString(
-      application.diagnostic.message,
-      1024,
-      code,
-      "application.diagnostic.message",
-    );
+    validateDiagnostic(application.diagnostic, code, "application.diagnostic");
     if (!REQUEST_ID_PATTERN.test(application.successorRequestId || "")) {
       fail(code, "Failed application must name one successor request");
     }
@@ -1387,26 +1418,39 @@ function safeDiagnostic(error) {
     : `Host workflow operation failed with ${code}`;
   let message = rawMessage;
   if (code === "ERROR") message = "An unexpected workflow exception was captured";
+  let issues;
   if (
     trustedMessage &&
     code === "MAP_REPAIR_REQUIRED" &&
     Array.isArray(error?.details?.issues)
   ) {
-    const issueSummary = error.details.issues.slice(0, 8).map((issue) => {
+    issues = error.details.issues.slice(0, 8).map((issue) => {
       const issueCode = TOKEN_PATTERN.test(issue?.code || "") ? issue.code : "ISSUE";
       const fieldPath = typeof issue?.fieldPath === "string"
         ? issue.fieldPath.replace(/[\u0000-\u001f\u007f]/gu, "").slice(0, 160)
         : "candidate";
+      const issueMessage = typeof issue?.message === "string"
+        ? issue.message.replace(/[\u0000-\u001f\u007f]/gu, "").slice(0, 512)
+        : "The bounded MAP candidate field is invalid.";
       const correctionHint = typeof issue?.correctionHint === "string"
-        ? issue.correctionHint.replace(/[\u0000-\u001f\u007f]/gu, "").slice(0, 240)
+        ? issue.correctionHint.replace(/[\u0000-\u001f\u007f]/gu, "").slice(0, 512)
         : "Correct the bounded candidate field.";
-      return `${issueCode} at ${fieldPath}: ${correctionHint}`;
-    }).join("; ");
+      return {
+        code: issueCode,
+        fieldPath: fieldPath || "candidate",
+        message: issueMessage || "The bounded MAP candidate field is invalid.",
+        correctionHint: correctionHint || "Correct the bounded candidate field.",
+      };
+    });
+    const issueSummary = issues.map((issue) => (
+      `${issue.code} at ${issue.fieldPath}: ${issue.correctionHint}`
+    )).join("; ");
     if (issueSummary) message = `${rawMessage} ${issueSummary}`;
   }
   return {
     code,
     message: message.slice(0, 1024) || "Captured workflow diagnostic",
+    ...(issues?.length > 0 ? { issues } : {}),
   };
 }
 
