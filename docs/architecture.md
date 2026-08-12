@@ -86,6 +86,15 @@ The active Codex task supplies semantic compression. Scripts own evidence discov
 exact source addressing, structural validation, no-overwrite publication, and managed temporary cleanup.
 No script starts another Codex process.
 
+The accepted but not-yet-complete adjudication boundary is specified by
+[ADR-0016](./adr/0016-main-codex-adjudication-loop.md) and its
+[ordered slices](./slice-plan-main-codex-adjudication.md). It replaces diagnostic-as-terminal behavior
+only as MA0-MA5 land: immutable requests and decisions form a digest-chained event history; Main Codex
+alone selects bounded repair, responsible-stage regeneration, publication relocation, or explicit
+degradation; and verified normal or degraded publication becomes the only software terminal state.
+Until the corresponding runtime slice is accepted, existing `terminal failure report` passages below
+describe current behavior, not the target authority model.
+
 New managed directories are v2 and pair the manifest with an immutable version binding over the
 session, absolute work directory, MAP result mode, reference-projection mode, projection and
 total-input budgets, and aggregate MAP-output budget. The default remains `sparse-map-v1`; an
@@ -383,5 +392,6 @@ re-runs an indexed workspace observation and fails closed if its source revision
 - **Provider-observation admission and persistence boundary**: [Provider Timing Capability for Multi-Wave MAP](./adr/0014-provider-timing-capability-for-multi-wave-map.md)
 - **Implemented earliest-owner targeted MAP repair (TR1-TR4)**: [Earliest-Owner Targeted MAP Repair](./adr/0015-earliest-owner-targeted-map-repair.md)
 - **Implemented empty-Progress earliest-owner repair (TR5)**: [Targeted MAP repair slices](./slice-plan-targeted-map-repair.md#slice-tr5--empty-progress-map-ownership)
+- **Accepted Main Codex final-adjudication boundary (MA0-MA5 planned)**: [Main Codex Adjudication Loop](./adr/0016-main-codex-adjudication-loop.md)
 
 - **Implemented version routing and transactional publication**: [Evidence-preserving compression slice plan](./slice-plan-evidence-preserving-compression.md#slice-6-transactional-publication-compatibility-and-end-to-end-evaluation)

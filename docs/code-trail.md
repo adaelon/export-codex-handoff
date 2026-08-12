@@ -738,3 +738,23 @@
 
 **Entry point**: Run `validate-map --check` on every Progress MAP even when its Progress Evidence is empty; apply the returned `deliverables` repair without inventing evidence and reuse the same dispatch.
 **Test**: Authentic red accepted the empty candidate; TR5 passes 1/1 after the fix. TR1-TR5, MAP Worker, and Action-ready AH2 regressions pass 18/18; the complete suite passes 187/187 with zero skips; installed-package acceptance passes 10/10. Fresh live publication completes in 432,420 ms with 3/3 first-attempt MAP receipts, no contract-shape retry, and `verify-evidence` valid for 5/5 anchors.
+
+## 2026-08-12 Main Codex adjudication decision and slices
+
+**Touched**:
+- `CONTEXT.md:Main Codex Adjudication vocabulary` — defines captured diagnostics, immutable requests, bound decisions, the resumable loop, and explicit degraded publication.
+- `docs/adr/0016-main-codex-adjudication-loop.md:Decision` — makes verified normal or degraded publication the only software terminal state.
+- `docs/slice-plan-main-codex-adjudication.md:MA0-MA5` — orders authentic-red inventory, durable contracts, all-stage routing, decision application, degraded publication, and live acceptance.
+- `docs/architecture.md:planned adjudication boundary / Decision index` — links the accepted target model without describing unimplemented runtime as current behavior.
+
+**Entry point**: Start MA0 by freezing the post-prepare command/diagnostic inventory and authentic red fixtures; do not edit runtime behavior before those fixtures exist.
+**Test**: Deterministic documentation checks cover ADR shape, resolved terminology, strict MA0-MA5 order, per-slice input/output/exclusion/done criteria, local links, and absence of unresolved placeholders.
+
+## 2026-08-12 Slice MA0 diagnostic inventory and authentic baseline
+
+**Touched**:
+- `docs/slice-plan-main-codex-adjudication.md:MA0 diagnostic inventory` — assigns every post-prepare CLI boundary a Failure Owner, current outcome, lawful decision set, and executable baseline.
+- `skills/export-codex-handoff/tests/main-codex-adjudication-ma0.test.mjs:MA0 authentic pre-dispatch failure` — proves the real budget rejection has a terminal failure report but no resumable adjudication state.
+
+**Entry point**: Start MA1 by writing red tests for immutable request replay, digest-chained event integrity, strict decision binding, and `adjudicate --inspect|--submit`; do not route stage failures or apply decisions in MA1.
+**Test**: MA0 passes 1/1; the complete pre-MA1 suite passes 189/189 with zero skips; `git diff --check` passes. No executable workflow file changed.

@@ -96,6 +96,30 @@ _Avoid_: Generic retry prompt, raw Worker evidence
 Correction of only the MAP candidate named by a MAP Repair Diagnostic while unrelated validated MAP results remain reusable.
 _Avoid_: Clean Compression Run, full MAP replay
 
+**Main Codex Adjudication**:
+An evidence-bounded decision by the Compression Task coordinator that resolves a captured workflow diagnostic through targeted repair, stage regeneration, or explicit degradation without inventing source facts.
+_Avoid_: Automatic bypass, silent mutation, user handoff
+
+**Captured Workflow Diagnostic**:
+A machine-readable problem recorded after a Compression Run becomes durable and before publication completes, including validation, capacity, budget, Worker, integrity, adjudication-application, and publication problems.
+_Avoid_: Process kill, machine loss, uncaught host disappearance
+
+**Adjudication Request**:
+An immutable, evidence-safe record that binds one Captured Workflow Diagnostic to one Compression Run, its responsible phase, and the actions Main Codex may lawfully choose.
+_Avoid_: Failure report, retry prompt, raw private evidence
+
+**Adjudication Decision**:
+An append-only Main Codex instruction bound to exactly one active Adjudication Request, choosing bounded repair, responsible-stage regeneration, publication relocation, or explicit degradation with recorded rationale.
+_Avoid_: Error suppression, receipt mutation, unbounded retry
+
+**Adjudication Loop**:
+The persistent Compression Run lifecycle that routes every captured workflow diagnostic to Main Codex Adjudication and resumes from the recorded decision until a Handoff is published.
+_Avoid_: Terminal failure, clean restart, unbounded retry
+
+**Degraded Handoff**:
+A valid published Handoff that preserves verified continuation facts and explicitly records unresolved diagnostics or unavailable evidence selected by Main Codex Adjudication.
+_Avoid_: Partial file, fabricated completion, failed export
+
 **Provider Timing Capability**:
 An execution-surface guarantee that provider-reported MAP generation timing can be correlated with one completed MapDispatch and durably recorded before later-wave admission.
 _Avoid_: Harness timing, coordinator elapsed time, inferred latency
