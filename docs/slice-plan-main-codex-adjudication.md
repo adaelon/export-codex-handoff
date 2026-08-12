@@ -142,6 +142,23 @@ inspection path and request identity to Main Codex.
 without losing accepted artifacts, replay the same command without adding an event, and prove no
 captured diagnostic projects a completed/failed export terminal state.
 
+**Implementation evidence**: the managed v2 CLI is the single capture facade. Before any
+post-prepare command it replays the MA1 chain and gates both `AWAITING_ADJUDICATION` and
+`APPLYING_ADJUDICATION`; on a caught diagnostic it selects the phase/Failure Owner/action policy,
+records one evidence-safe request, and returns its exact run/request/digest plus inspection paths.
+The immutable contract now replays independently of mutable manifest integrity. The compatibility
+`failure-report.json` is a non-authoritative `codex-handoff-captured-workflow-diagnostic` projection,
+never a completed/failed run state. Deterministic library cores and legacy v1 execution stay below
+the v2 CLI facade. No decision action is applied.
+
+**Acceptance evidence**: the authentic MA2 red failed 0/16 because every real boundary remained
+`RUNNING`, parse errors were unbound, and submitted decisions did not gate commands. The completed
+focused matrix passes 19/19 across Frame/pre-dispatch, every MAP subcommand, provider timing,
+capacity, REDUCE, publication, managed parse, mutable-manifest integrity, accepted-artifact
+retention, idempotent replay, and unapplied-decision gating. MA0-MA2 plus MAP/TR1-TR6, provider,
+REDUCE, and publication regressions pass 70/70; the isolated staged MA2 snapshot passes 214/214,
+and the coexisting complete worktree passes 215/215; both have zero skips.
+
 ## Slice MA3 — Decision application and immutable supersession
 
 **Input**: one active, strictly bound Adjudication Decision selecting `retry_stage`,

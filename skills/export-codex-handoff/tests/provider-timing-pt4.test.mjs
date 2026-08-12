@@ -389,7 +389,7 @@ test("PT4 leaves exact plan, architecture, and code-trail residue", async () => 
   assert.match(plan, /\*\*PT4 implementation evidence\*\*:/);
   assert.match(plan, /\*\*PT4 exact verification evidence\*\*:/);
   assert.match(architecture, /schedule-map <WORK_DIR> <AVAILABLE_SLOTS>/);
-  assert.match(architecture, /schedule-map terminal failure report/);
+  assert.match(architecture, /Each becomes one active Adjudication Request/);
   assert.match(codeTrail, /## 2026-08-10 Slice PT4 later-wave scheduling and terminal diagnostics/);
   for (const residue of [
     "task-workflow-core.mjs:scheduleNextMapWave",

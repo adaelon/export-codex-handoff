@@ -87,7 +87,7 @@ async function writeJson(target, value) {
   await fs.promises.writeFile(target, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
-test("MA0 pre-dispatch failure remains unrouted after MA1 contract initialization", async () => {
+test("MA0 core pre-dispatch fixture remains below the MA2 CLI capture facade", async () => {
   const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "codex-ma0-adjudication-gap-"));
   try {
     const prepared = await prepareCompressionTask({
@@ -121,7 +121,7 @@ test("MA0 pre-dispatch failure remains unrouted after MA1 contract initializatio
       path.join(prepared.workDir, "failure-report.json"),
       "utf8",
     ));
-    assert.equal(report.kind, "codex-handoff-terminal-failure");
+    assert.equal(report.kind, "codex-handoff-captured-workflow-diagnostic");
     assert.equal(report.phase, "pre-dispatch");
     assert.equal(report.diagnostic.code, "LIVE_BUDGET_UNREACHABLE");
     const contract = JSON.parse(await fs.promises.readFile(

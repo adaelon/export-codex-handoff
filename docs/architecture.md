@@ -78,7 +78,7 @@ Dedicated Codex Compression Task
                  -> dedicated Accepted proposal and Terminal state sections
                  -> [continuation v2] isolated execution-first Handoff v2 renderer
                  -> [continuation v2] integrity-covered Evidence Key map + consumer contract
-                 -> persisted failure report on terminal prepare/check/publish errors
+                 -> bounded diagnostic projection; managed CLI opens one Adjudication Request
                  -> fixed MAP generation/check-accept/REDUCE/publication metrics
 ```
 
@@ -88,12 +88,14 @@ No script starts another Codex process.
 
 The accepted adjudication boundary is specified by
 [ADR-0016](./adr/0016-main-codex-adjudication-loop.md) and its
-[ordered slices](./slice-plan-main-codex-adjudication.md). MA1 is implemented: each new v2 run has an
+[ordered slices](./slice-plan-main-codex-adjudication.md). MA1-MA2 are implemented: each new v2 run has an
 immutable root `adjudication-contract.json`; bounded request and decision documents are referenced by
 a numbered digest chain; replay is authoritative; and `adjudicate --inspect|--submit` exposes that
-state without a mutable status file. Existing stage failures are not routed into this substrate until
-MA2, and decisions are not applied until MA3. Therefore existing `terminal failure report` passages
-below still describe current stage behavior, not the final MA0-MA5 authority model.
+state without a mutable status file. The managed v2 CLI replays that state before every post-prepare
+command, captures a caught diagnostic through its phase policy, and refuses to invoke the deterministic
+core while a request or submitted-but-unapplied decision is active. Library-level workflow functions
+remain composable deterministic cores, and v1 runs without a durable adjudication contract keep their
+compatibility route. Decisions are not applied until MA3.
 
 ```text
 v2 prepare -> immutable adjudication-contract.json
@@ -101,7 +103,12 @@ bounded library ingress -> immutable request document -> numbered request_opened
 adjudicate --inspect -> verify contract + document digests + complete event chain -> replay state
 adjudicate --submit -> exact run/request/digest/action check -> immutable decision document
                     -> numbered decision_submitted event -> APPLYING_ADJUDICATION
-MA2 pending: existing workflow catches -> bounded library ingress
+managed v2 CLI command -> replay state
+  RUNNING -> invoke deterministic core
+    success -> return unchanged command result
+    caught diagnostic -> phase/owner/action policy -> bounded library ingress
+                      -> non-terminal failure-report projection + exact inspection reference
+  AWAITING_ADJUDICATION | APPLYING_ADJUDICATION -> return same request identity; do not invoke core
 MA3 pending: APPLYING_ADJUDICATION -> apply named action
 ```
 
@@ -154,7 +161,7 @@ kept separate from Node check/complete/accept, REDUCE preparation/check, and tra
 publication time; harness elapsed time cannot enter a provider field. Immediately after Frame
 validation, the coordinator projects the `createdAt`-to-`frameValidatedAt` workflow duration plus
 fixed conservative 60,000 ms REDUCE and 20,000 ms publication reserves. Invalid UTC boundaries fail
-deterministically; a lower bound above 600,000 ms writes a retained terminal report and returns
+deterministically; a lower bound above 600,000 ms writes a retained captured-diagnostic projection and returns
 `LIVE_BUDGET_UNREACHABLE` before MAP contexts, MapDispatch descriptors, or claims exist. Before later
 waves, the coordinator calls `schedule-map <WORK_DIR> <AVAILABLE_SLOTS>`. That boundary rereads only
 the manifest and accepted MapReceipts, verifies the receipt-bound metric integrity state, requires
@@ -162,8 +169,8 @@ unique correlated observations and exact workflow durations for every admitted d
 combines the first-wave samples with the newly observed slot count and conservative
 REDUCE/publication reserves. Missing, duplicate, broken, or non-correlated samples produce
 `INCOMPLETE_FIRST_WAVE_METRICS`; zero capacity produces `MAP_WORKER_UNAVAILABLE`; an over-target
-projection produces `LIVE_BUDGET_UNREACHABLE`. Each is a retained schedule-map terminal failure report
-and cannot create an attempt-2 Worker dispatch or public output. The current model and reasoning
+projection produces `LIVE_BUDGET_UNREACHABLE`. Each becomes one active Adjudication Request at the
+managed CLI boundary and cannot create an attempt-2 Worker dispatch or public output. The current model and reasoning
 configuration stays unchanged unless a controlled provider-timed comparison wins; concurrency never
 exceeds the fresh slot observation.
 
@@ -246,8 +253,9 @@ the Claim table and frozen category set. `validate-reduce --check` requires the 
 those projections; Frame v2 additionally requires exact Accepted Proposal and Terminal state
 projections. It derives final Source Thread provenance from retained claim and frozen-frame
 anchors, and freezes the exact serialized digest. Publication refuses an unchecked or mutated
-candidate. Terminal `prepare-reduce`, `validate-reduce`, and `publish` errors retain a bounded
-`failure-report.json` with diagnostics, phase timings, Worker metrics, and the managed workdir.
+candidate. Caught `prepare-reduce`, `validate-reduce`, and `publish` errors retain a bounded
+`failure-report.json` projection with diagnostics, phase timings, Worker metrics, request identity,
+and the managed workdir; event replay, not that projection, owns lifecycle state.
 
 The post-worker provider-observation ingress is a host/coordinator boundary, not a MAP Worker
 validation mode. New work directories carry a `provider-observation-v1` manifest binding. After the
@@ -300,7 +308,7 @@ Source Thread UUID
   -> active-task Frame v2 (byte-exact goal + clause exclusions + proposal? + terminal)
        -> frame.json -> validate + freeze digest
        -> pre-dispatch lower bound (prepare/frame + REDUCE/publication reserves)
-            -> invalid boundary: stable diagnostic + retained terminal report
+            -> invalid boundary: stable diagnostic + retained captured-diagnostic projection
             -> >600000ms: LIVE_BUDGET_UNREACHABLE + zero MapDispatches/claims
             -> <=600000ms: continue unchanged
   -> bounded complete-turn or packed-fragment segment
@@ -342,7 +350,7 @@ Source Thread UUID
        -> first-wave conservative projection with fixed REDUCE/publication reserves
             -> <=600000ms: dispatch next wave within freshly observed slots
             -> >600000ms: LIVE_BUDGET_UNREACHABLE
-       -> every failure: retained schedule-map terminal failure report; no retry/publication
+       -> every failure: active Adjudication Request + retained projection; no retry/publication
   -> [sparse/legacy fragment path] all child receipts validate -> deterministic parent summary
   -> [continuation] completed tables -> one global Claim table + Critical Anchor disposition
        -> deterministic Accepted Proposal/Terminal-State Claims inserted once
@@ -402,6 +410,6 @@ re-runs an indexed workspace observation and fails closed if its source revision
 - **Provider-observation admission and persistence boundary**: [Provider Timing Capability for Multi-Wave MAP](./adr/0014-provider-timing-capability-for-multi-wave-map.md)
 - **Implemented earliest-owner targeted MAP repair (TR1-TR4)**: [Earliest-Owner Targeted MAP Repair](./adr/0015-earliest-owner-targeted-map-repair.md)
 - **Implemented empty-Progress earliest-owner repair (TR5)**: [Targeted MAP repair slices](./slice-plan-targeted-map-repair.md#slice-tr5--empty-progress-map-ownership)
-- **Implemented Main Codex durable contract/event substrate (MA1; MA2-MA5 planned)**: [Main Codex Adjudication Loop](./adr/0016-main-codex-adjudication-loop.md)
+- **Implemented Main Codex durable contract/event substrate and all-stage CLI capture/gating (MA1-MA2; MA3-MA5 planned)**: [Main Codex Adjudication Loop](./adr/0016-main-codex-adjudication-loop.md)
 
 - **Implemented version routing and transactional publication**: [Evidence-preserving compression slice plan](./slice-plan-evidence-preserving-compression.md#slice-6-transactional-publication-compatibility-and-end-to-end-evaluation)

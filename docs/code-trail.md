@@ -770,3 +770,16 @@
 
 **Entry point**: Use `adjudicate <WORK_DIR> --inspect`; submit one exact active-request binding with `--submit <DECISION_FILE>`. Stage-failure routing and decision application remain unavailable until MA2/MA3.
 **Test**: Authentic red failed 0/7 on the missing MA1 boundary; focused MA1 passes 7/7 and related MA0/Compression/MAP regressions pass 28/28. The isolated staged MA1 snapshot passes 195/195; the coexisting worktree with preserved uncommitted TR6 passes 196/196; both have zero skips.
+
+## 2026-08-12 Slice MA2 all-stage capture and run gating
+
+**Touched**:
+- `skills/export-codex-handoff/scripts/lib/adjudication.mjs:ADJUDICATION_PHASE_POLICIES / withAdjudicationCapture / captureAdjudicationFailure` — maps every managed phase to bounded request authority, replays without mutable-manifest authority, and returns exact active-request inspection data.
+- `skills/export-codex-handoff/scripts/export-handoff.mjs:dispatch / managedParseContext` — makes the managed v2 CLI the single capture/gating facade while leaving deterministic cores and legacy v1 routing composable.
+- `skills/export-codex-handoff/scripts/lib/task-workflow-core.mjs:recordCapturedWorkflowDiagnostic` — replaces terminal failure projection with a non-authoritative captured-diagnostic projection.
+- `skills/export-codex-handoff/tests/main-codex-adjudication-ma2.test.mjs:MA2 phase/capture/gating matrix` — covers every post-prepare command, pre-dispatch budget, accepted-artifact retention, idempotent replay, safe CLI parse, mutable-manifest integrity, and unapplied-decision gating.
+- `skills/export-codex-handoff/tests/main-codex-adjudication-ma0.test.mjs:core fixture` and `provider-timing-pt4.test.mjs:architecture residue` — retain lower-level characterization while asserting the new non-terminal projection and CLI authority.
+- `docs/slice-plan-main-codex-adjudication.md:Slice MA2` and `docs/architecture.md:adjudication flow / Decision index` — record MA2 as implemented while retaining MA3-MA5 exclusions.
+
+**Entry point**: Invoke any post-prepare command through `export-handoff.mjs`; on failure, use the returned `adjudication` reference or `adjudicate <WORK_DIR> --inspect`. No ordinary command advances until MA3 applies the submitted decision.
+**Test**: Authentic red failed 0/16 on missing capture/gating. Focused MA2 passes 19/19; MA0-MA2 plus MAP/TR1-TR6, provider, REDUCE, and publication regressions pass 70/70; the isolated staged MA2 snapshot passes 214/214 and the coexisting complete Node suite passes 215/215, both with zero skips; syntax checks and `git diff --check` pass.

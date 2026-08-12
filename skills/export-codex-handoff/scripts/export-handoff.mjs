@@ -3,8 +3,10 @@
 import fs from "node:fs";
 
 import {
+  captureAdjudicationFailure,
   inspectAdjudication,
   submitAdjudicationDecision,
+  withAdjudicationCapture,
 } from "./lib/adjudication.mjs";
 import {
   retrieveEvidenceFromFile,
@@ -249,61 +251,132 @@ async function readBoundedDecisionDocument(target) {
 async function dispatch(command, args) {
   if (command === "prepare") return prepareCompressionTask(parsePrepare(args));
   if (command === "prepare-frame") {
-    return prepareFrameStage(requirePositional(args, 0, "WORK_DIR"));
+    const workDir = requirePositional(args, 0, "WORK_DIR");
+    return withAdjudicationCapture(
+      workDir,
+      "prepare-frame",
+      () => prepareFrameStage(workDir),
+    );
   }
   if (command === "validate-frame") {
-    return validateFrameStage(requirePositional(args, 0, "WORK_DIR"));
+    const workDir = requirePositional(args, 0, "WORK_DIR");
+    return withAdjudicationCapture(
+      workDir,
+      "validate-frame",
+      () => validateFrameStage(workDir),
+    );
   }
   if (command === "validate-map") {
     const action = parseMapWorkerAction(args);
     if (action.action === "claim") {
-      return claimMapDispatch(
+      return withAdjudicationCapture(
         action.workDir,
-        action.segmentId,
-        action.dispatchId,
-        action.workerId,
+        "validate-map-claim",
+        () => claimMapDispatch(
+          action.workDir,
+          action.segmentId,
+          action.dispatchId,
+          action.workerId,
+        ),
+        action,
       );
     }
     if (action.action === "complete") {
-      return completeMapDispatch(action.workDir, action.segmentId, action.dispatchId);
+      return withAdjudicationCapture(
+        action.workDir,
+        "validate-map-complete",
+        () => completeMapDispatch(
+          action.workDir,
+          action.segmentId,
+          action.dispatchId,
+        ),
+        action,
+      );
     }
     if (action.action === "check") {
-      return checkMapDispatch(action.workDir, action.segmentId, action.dispatchId);
+      return withAdjudicationCapture(
+        action.workDir,
+        "validate-map-check",
+        () => checkMapDispatch(
+          action.workDir,
+          action.segmentId,
+          action.dispatchId,
+        ),
+        action,
+      );
     }
     if (action.action === "accept") {
-      return acceptMapReceipt(action.workDir, action.segmentId, action.dispatchId);
+      return withAdjudicationCapture(
+        action.workDir,
+        "validate-map-accept",
+        () => acceptMapReceipt(
+          action.workDir,
+          action.segmentId,
+          action.dispatchId,
+        ),
+        action,
+      );
     }
-    return validateMapStage(action.workDir, action.segmentId);
+    return withAdjudicationCapture(
+      action.workDir,
+      "validate-map",
+      () => validateMapStage(action.workDir, action.segmentId),
+      action,
+    );
   }
   if (command === "record-map-metric") {
     const action = parseMapMetricAction(args);
-    const observation = await readBoundedObservationDocument(action.observationPath);
-    return recordMapGenerationMetric(
+    return withAdjudicationCapture(
       action.workDir,
-      action.segmentId,
-      action.dispatchId,
-      observation,
+      "record-map-metric",
+      async () => recordMapGenerationMetric(
+        action.workDir,
+        action.segmentId,
+        action.dispatchId,
+        await readBoundedObservationDocument(action.observationPath),
+      ),
+      action,
     );
   }
   if (command === "schedule-map") {
     const action = parseScheduleMapAction(args);
-    return scheduleNextMapWave(action.workDir, action.availableSlots);
+    return withAdjudicationCapture(
+      action.workDir,
+      "schedule-map",
+      () => scheduleNextMapWave(action.workDir, action.availableSlots),
+      action,
+    );
   }
   if (command === "prepare-reduce") {
-    return prepareReduceStage(requirePositional(args, 0, "WORK_DIR"));
+    const workDir = requirePositional(args, 0, "WORK_DIR");
+    return withAdjudicationCapture(
+      workDir,
+      "prepare-reduce",
+      () => prepareReduceStage(workDir),
+    );
   }
   if (command === "validate-reduce") {
     const workDir = requirePositional(args, 0, "WORK_DIR");
     if (args.length !== 2 || args[1] !== "--check") {
       throw new Error("validate-reduce requires --check");
     }
-    return checkReduceStage(workDir);
+    return withAdjudicationCapture(
+      workDir,
+      "validate-reduce",
+      () => checkReduceStage(workDir),
+    );
   }
   if (command === "publish") {
     const workDir = requirePositional(args, 0, "WORK_DIR");
     const unknown = args.slice(1).filter((item) => item !== "--keep-workdir");
     if (unknown.length) throw new Error(`Unknown option: ${unknown[0]}`);
-    return publishHandoff(workDir, { keepWorkdir: args.includes("--keep-workdir") });
+    return withAdjudicationCapture(
+      workDir,
+      "publish",
+      () => publishHandoff(workDir, {
+        keepWorkdir: args.includes("--keep-workdir"),
+      }),
+    );
   }
   if (command === "adjudicate") {
     const action = parseAdjudicationAction(args);
@@ -325,6 +398,26 @@ async function dispatch(command, args) {
   throw new Error(`Unknown command: ${command || "<missing>"}`);
 }
 
+const MANAGED_COMMAND_PHASES = Object.freeze({
+  "prepare-frame": "prepare-frame",
+  "validate-frame": "validate-frame",
+  "validate-map": "validate-map",
+  "record-map-metric": "record-map-metric",
+  "schedule-map": "schedule-map",
+  "prepare-reduce": "prepare-reduce",
+  "validate-reduce": "validate-reduce",
+  publish: "publish",
+});
+
+function managedParseContext(command, args) {
+  const phase = MANAGED_COMMAND_PHASES[command];
+  const workDir = args[0];
+  if (!phase || typeof workDir !== "string" || workDir.startsWith("--")) {
+    return null;
+  }
+  return { phase, workDir };
+}
+
 async function main() {
   const args = process.argv.slice(2);
   if (args.includes("--help") || args[0] === "help") {
@@ -335,10 +428,35 @@ async function main() {
     const result = await dispatch(args[0], args.slice(1));
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   } catch (error) {
+    let reported = error;
+    const parseContext = managedParseContext(args[0], args.slice(1));
+    if (
+      parseContext &&
+      !error?.details?.adjudication &&
+      !error?.code
+    ) {
+      const parseError = new ExportHandoffError(
+        "INVALID_CLI_ARGUMENTS",
+        `Arguments for managed command ${parseContext.phase} are invalid`,
+      );
+      try {
+        await captureAdjudicationFailure(
+          parseContext.workDir,
+          parseContext.phase,
+          parseError,
+          {
+            artifactKind: "cli_arguments",
+            allowedActions: ["retry_stage", "publish_degraded"],
+          },
+        );
+      } catch (captureError) {
+        reported = captureError === parseError ? error : captureError;
+      }
+    }
     process.stderr.write(`${JSON.stringify({
-      code: error.code || "ERROR",
-      message: error.message,
-      details: error.details,
+      code: reported.code || "ERROR",
+      message: reported.message,
+      details: reported.details,
     }, null, 2)}\n`);
     process.exitCode = 1;
   }

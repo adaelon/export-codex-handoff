@@ -207,6 +207,7 @@ async function prepare(root, options = {}) {
     await fs.promises.rm(path.join(prepared.workDir, "workflow-version.json"), {
       force: true,
     });
+    await fs.promises.rm(prepared.adjudicationContractPath, { force: true });
   }
   const frameStage = await prepareFrameStage(prepared.workDir);
   const frameInput = JSON.parse(await fs.promises.readFile(frameStage.frameInputPath, "utf8"));

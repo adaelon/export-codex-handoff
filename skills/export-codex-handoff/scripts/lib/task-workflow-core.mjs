@@ -236,7 +236,7 @@ function serializableDetails(details) {
   }
 }
 
-async function recordTerminalFailure(workDir, phase, error, timing = {}) {
+async function recordCapturedWorkflowDiagnostic(workDir, phase, error, timing = {}) {
   try {
     const resolvedWorkDir = path.resolve(workDir);
     const manifest = await readJson(
@@ -244,7 +244,7 @@ async function recordTerminalFailure(workDir, phase, error, timing = {}) {
       "Compression Task manifest",
     );
     if (path.resolve(manifest.workDir) !== resolvedWorkDir) return null;
-    const failedAt = new Date().toISOString();
+    const capturedAt = new Date().toISOString();
     const outputMetrics = mapOutputMetrics(manifest);
     const failureReportPath = manifest.paths?.failureReport || path.join(
       resolvedWorkDir,
@@ -253,15 +253,15 @@ async function recordTerminalFailure(workDir, phase, error, timing = {}) {
     assertInsideWorkDir(resolvedWorkDir, failureReportPath, "Failure report path");
     await writeJson(failureReportPath, {
       formatVersion: 1,
-      kind: "codex-handoff-terminal-failure",
-      failedAt,
+      kind: "codex-handoff-captured-workflow-diagnostic",
+      capturedAt,
       phase,
       diagnostic: {
         code: error?.code || "ERROR",
         message: error?.message || String(error),
         details: serializableDetails(error?.details),
       },
-      phaseTimingsMs: workflowPhaseTimings(manifest, failedAt),
+      phaseTimingsMs: workflowPhaseTimings(manifest, capturedAt),
       performanceMetrics: buildPerformanceMetrics(
         workflowPerformanceState(manifest),
         {
@@ -294,12 +294,12 @@ async function recordTerminalFailure(workDir, phase, error, timing = {}) {
   }
 }
 
-async function withTerminalFailureReport(workDir, phase, operation) {
+async function withCapturedWorkflowDiagnostic(workDir, phase, operation) {
   const startedAtMs = Date.now();
   try {
     return await operation();
   } catch (error) {
-    await recordTerminalFailure(workDir, phase, error, {
+    await recordCapturedWorkflowDiagnostic(workDir, phase, error, {
       failureDurationMs: durationSince(startedAtMs),
     });
     throw error;
@@ -1791,7 +1791,7 @@ export async function validateFrameStage(workDir) {
       );
     }
   } catch (error) {
-    await recordTerminalFailure(workDir, "pre-dispatch", error);
+    await recordCapturedWorkflowDiagnostic(workDir, "pre-dispatch", error);
     throw error;
   }
 
@@ -2838,7 +2838,7 @@ async function scheduleNextMapWaveInternal(workDir, availableSlots) {
 }
 
 export async function scheduleNextMapWave(workDir, availableSlots) {
-  return withTerminalFailureReport(
+  return withCapturedWorkflowDiagnostic(
     workDir,
     "schedule-map",
     () => scheduleNextMapWaveInternal(workDir, availableSlots),
@@ -3051,7 +3051,7 @@ async function prepareReduceStageInternal(workDir) {
 }
 
 export async function prepareReduceStage(workDir) {
-  return withTerminalFailureReport(
+  return withCapturedWorkflowDiagnostic(
     workDir,
     "prepare-reduce",
     () => prepareReduceStageInternal(workDir),
@@ -3170,7 +3170,7 @@ async function checkReduceStageInternal(workDir, calibration = undefined) {
 }
 
 export async function checkReduceStage(workDir, calibration = undefined) {
-  return withTerminalFailureReport(
+  return withCapturedWorkflowDiagnostic(
     workDir,
     "validate-reduce",
     () => checkReduceStageInternal(workDir, calibration),
@@ -3458,7 +3458,7 @@ async function publishHandoffInternal(workDir, options = {}, dependencies = {}) 
 }
 
 export async function publishHandoff(workDir, options = {}, dependencies = {}) {
-  return withTerminalFailureReport(
+  return withCapturedWorkflowDiagnostic(
     workDir,
     "publish",
     () => publishHandoffInternal(workDir, options, dependencies),

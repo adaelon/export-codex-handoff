@@ -31,6 +31,124 @@ export const ADJUDICATION_DECISION_ACTIONS = Object.freeze([
   "publish_degraded",
 ]);
 
+export const ADJUDICATION_PHASE_POLICIES = Object.freeze({
+  "pre-dispatch": Object.freeze({
+    failureOwner: "coordinator",
+    artifactKind: "compression-frame",
+    allowedActions: Object.freeze([
+      "retry_stage",
+      "regenerate_stage",
+      "publish_degraded",
+    ]),
+  }),
+  "prepare-frame": Object.freeze({
+    failureOwner: "workflow-control-files",
+    artifactKind: "compression-frame-input",
+    allowedActions: Object.freeze([
+      "retry_stage",
+      "regenerate_stage",
+      "publish_degraded",
+    ]),
+  }),
+  "validate-frame": Object.freeze({
+    failureOwner: "compression-frame-author",
+    artifactKind: "compression-frame",
+    allowedActions: Object.freeze([
+      "retry_stage",
+      "regenerate_stage",
+      "publish_degraded",
+    ]),
+  }),
+  "validate-map-claim": Object.freeze({
+    failureOwner: "coordinator",
+    artifactKind: "map-dispatch-claim",
+    allowedActions: Object.freeze([
+      "retry_stage",
+      "regenerate_stage",
+      "publish_degraded",
+    ]),
+  }),
+  "validate-map-check": Object.freeze({
+    failureOwner: "map-worker",
+    artifactKind: "map-candidate",
+    allowedActions: Object.freeze([
+      "retry_stage",
+      "regenerate_stage",
+      "publish_degraded",
+    ]),
+  }),
+  "validate-map-complete": Object.freeze({
+    failureOwner: "map-worker",
+    artifactKind: "map-candidate",
+    allowedActions: Object.freeze([
+      "retry_stage",
+      "regenerate_stage",
+      "publish_degraded",
+    ]),
+  }),
+  "validate-map-accept": Object.freeze({
+    failureOwner: "coordinator",
+    artifactKind: "map-receipt",
+    allowedActions: Object.freeze([
+      "regenerate_stage",
+      "publish_degraded",
+    ]),
+  }),
+  "validate-map": Object.freeze({
+    failureOwner: "earliest-failing-map-subphase",
+    artifactKind: "map-lifecycle",
+    allowedActions: Object.freeze([
+      "retry_stage",
+      "regenerate_stage",
+      "publish_degraded",
+    ]),
+  }),
+  "record-map-metric": Object.freeze({
+    failureOwner: "host-ingress",
+    artifactKind: "provider-observation",
+    allowedActions: Object.freeze([
+      "retry_stage",
+      "regenerate_stage",
+      "publish_degraded",
+    ]),
+  }),
+  "schedule-map": Object.freeze({
+    failureOwner: "coordinator",
+    artifactKind: "map-wave-schedule",
+    allowedActions: Object.freeze([
+      "retry_stage",
+      "publish_degraded",
+    ]),
+  }),
+  "prepare-reduce": Object.freeze({
+    failureOwner: "earliest-failing-map-or-reduce-input-owner",
+    artifactKind: "reduce-input",
+    allowedActions: Object.freeze([
+      "retry_stage",
+      "regenerate_stage",
+      "publish_degraded",
+    ]),
+  }),
+  "validate-reduce": Object.freeze({
+    failureOwner: "reduce-author",
+    artifactKind: "reduce-result",
+    allowedActions: Object.freeze([
+      "retry_stage",
+      "regenerate_stage",
+      "publish_degraded",
+    ]),
+  }),
+  publish: Object.freeze({
+    failureOwner: "publisher",
+    artifactKind: "publication-pair",
+    allowedActions: Object.freeze([
+      "retry_stage",
+      "relocate_publication",
+      "publish_degraded",
+    ]),
+  }),
+});
+
 const LIFECYCLE_STATES = Object.freeze([
   "RUNNING",
   "AWAITING_ADJUDICATION",
@@ -102,6 +220,40 @@ function textDigest(text) {
   return `sha256:${sha256Text(text)}`;
 }
 
+function publicAdjudicationReference(state) {
+  return {
+    lifecycleState: state.lifecycleState,
+    runId: state.runId,
+    requestId: state.activeRequest.requestId,
+    requestDigest: state.activeRequest.requestDigest,
+    inspectionPath: state.activeRequest.documentPath,
+    inspectCommand: [
+      "adjudicate",
+      path.dirname(state.contract.documentPath),
+      "--inspect",
+    ],
+  };
+}
+
+export function throwCapturedAdjudication(error, state) {
+  throw new ExportHandoffError(
+    error?.code || "ERROR",
+    error?.message || String(error),
+    { adjudication: publicAdjudicationReference(state) },
+  );
+}
+
+export function throwActiveAdjudication(state) {
+  throwCapturedAdjudication(
+    {
+      code: state.activeRequest.request.diagnostic.code,
+      message:
+        `Compression Run is ${state.lifecycleState}; inspect the active Adjudication Request before continuing`,
+    },
+    state,
+  );
+}
+
 function jsonText(value) {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
@@ -166,31 +318,6 @@ async function writeJsonExclusive(target, value) {
   });
 }
 
-async function loadManagedManifest(workDir) {
-  const resolved = path.resolve(workDir);
-  const document = await readJsonDocument(
-    path.join(resolved, "manifest.json"),
-    "ADJUDICATION_RUN_INVALID",
-    "Compression Task manifest",
-  );
-  const manifest = document.value;
-  if (
-    !isPlainObject(manifest) ||
-    manifest.managedWorkDir !== true ||
-    manifest.kind !== "codex-handoff-compression-task" ||
-    path.resolve(manifest.workDir || "") !== resolved ||
-    path.dirname(resolved) !== path.resolve(manifest.workRoot || "") ||
-    !path.basename(resolved).startsWith(WORKDIR_PREFIX) ||
-    manifest.formatVersion !== 2
-  ) {
-    fail(
-      "ADJUDICATION_RUN_INVALID",
-      `Refusing to adjudicate an unrecognized Compression Run: ${resolved}`,
-    );
-  }
-  return { workDir: resolved, manifest };
-}
-
 function contractRunBinding(input) {
   return {
     sessionId: input.sessionId,
@@ -227,7 +354,7 @@ function buildContract(manifest) {
   };
 }
 
-function validateContract(contract, manifest) {
+function validateContract(contract, manifest = null) {
   requireExactKeys(contract, [
     "formatVersion",
     "kind",
@@ -278,18 +405,24 @@ function validateContract(contract, manifest) {
     "contract.evidenceIndexPath",
   );
   const binding = contractRunBinding(contract);
+  const manifestMatches = !manifest || (
+    contract.sessionId === manifest.sessionId &&
+    path.resolve(contract.workDir || "") === path.resolve(manifest.workDir) &&
+    contract.sourceRevision === manifest.sourceRevision &&
+    contract.workflowVersion === manifest.formatVersion &&
+    contract.mapResultMode === manifest.mapResultMode &&
+    path.resolve(contract.outputPath || "") === path.resolve(manifest.outputPath) &&
+    path.resolve(contract.evidenceIndexPath || "") === path.resolve(
+      manifest.evidenceIndexPath,
+    )
+  );
   if (
     contract.formatVersion !== FORMAT_VERSION ||
     contract.kind !== CONTRACT_KIND ||
     !RUN_ID_PATTERN.test(contract.runId || "") ||
     contract.runId !== runIdForBinding(binding) ||
-    contract.sessionId !== manifest.sessionId ||
-    path.resolve(contract.workDir || "") !== path.resolve(manifest.workDir) ||
-    contract.sourceRevision !== manifest.sourceRevision ||
-    contract.workflowVersion !== manifest.formatVersion ||
-    contract.mapResultMode !== manifest.mapResultMode ||
-    path.resolve(contract.outputPath || "") !== path.resolve(manifest.outputPath) ||
-    path.resolve(contract.evidenceIndexPath || "") !== path.resolve(manifest.evidenceIndexPath) ||
+    contract.workflowVersion !== 2 ||
+    !manifestMatches ||
     canonicalStringify(contract.lifecycleStates) !== canonicalStringify(LIFECYCLE_STATES) ||
     canonicalStringify(contract.decisionActions) !== canonicalStringify(
       ADJUDICATION_DECISION_ACTIONS,
@@ -339,20 +472,46 @@ export async function initializeAdjudicationContract(manifest) {
 }
 
 async function loadContractContext(workDir) {
-  const run = await loadManagedManifest(workDir);
-  const target = contractPath(run.workDir);
+  const resolved = path.resolve(workDir);
+  const target = contractPath(resolved);
   const document = await readJsonDocument(
     target,
     "ADJUDICATION_CONTRACT_MISSING",
     "Adjudication contract",
   );
-  const contract = validateContract(document.value, run.manifest);
+  const contract = validateContract(document.value);
+  if (
+    path.resolve(contract.workDir) !== resolved ||
+    path.dirname(resolved) !== path.resolve(path.dirname(contract.workDir)) ||
+    !path.basename(resolved).startsWith(WORKDIR_PREFIX)
+  ) {
+    fail(
+      "ADJUDICATION_CONTRACT_INVALID",
+      "Adjudication contract does not own the requested Compression Run directory",
+    );
+  }
   return {
-    ...run,
+    workDir: resolved,
     contract,
     contractPath: target,
     contractDigest: textDigest(document.text),
   };
+}
+
+async function adjudicationEnabled(workDir) {
+  const resolved = path.resolve(workDir);
+  if (await pathExists(contractPath(resolved))) return true;
+  try {
+    const manifest = JSON.parse(await fs.promises.readFile(
+      path.join(resolved, "manifest.json"),
+      "utf8",
+    ));
+    if (manifest?.formatVersion === 1) return false;
+    if (manifest?.formatVersion === 2) return true;
+  } catch {
+    // A durable v2 run can still replay from its immutable contract.
+  }
+  return false;
 }
 
 function validateNamedScalarMap(value, options) {
@@ -927,6 +1086,178 @@ export async function createAdjudicationRequest(workDir, input) {
     throw error;
   }
   return inspectAdjudication(context.workDir);
+}
+
+function safeDiagnostic(error) {
+  const code = typeof error?.code === "string" && TOKEN_PATTERN.test(error.code)
+    ? error.code
+    : "ERROR";
+  const trustedMessage = error instanceof ExportHandoffError;
+  const rawMessage = trustedMessage &&
+    typeof error?.message === "string" && error.message.length > 0
+    ? error.message
+    : `Host workflow operation failed with ${code}`;
+  let message = rawMessage;
+  if (code === "ERROR") message = "An unexpected workflow exception was captured";
+  if (
+    trustedMessage &&
+    code === "MAP_REPAIR_REQUIRED" &&
+    Array.isArray(error?.details?.issues)
+  ) {
+    const issueSummary = error.details.issues.slice(0, 8).map((issue) => {
+      const issueCode = TOKEN_PATTERN.test(issue?.code || "") ? issue.code : "ISSUE";
+      const fieldPath = typeof issue?.fieldPath === "string"
+        ? issue.fieldPath.replace(/[\u0000-\u001f\u007f]/gu, "").slice(0, 160)
+        : "candidate";
+      const correctionHint = typeof issue?.correctionHint === "string"
+        ? issue.correctionHint.replace(/[\u0000-\u001f\u007f]/gu, "").slice(0, 240)
+        : "Correct the bounded candidate field.";
+      return `${issueCode} at ${fieldPath}: ${correctionHint}`;
+    }).join("; ");
+    if (issueSummary) message = `${rawMessage} ${issueSummary}`;
+  }
+  return {
+    code,
+    message: message.slice(0, 1024) || "Captured workflow diagnostic",
+  };
+}
+
+function capturedPhase(phase, error) {
+  if (phase === "validate-frame" && error?.code === "LIVE_BUDGET_UNREACHABLE") {
+    return "pre-dispatch";
+  }
+  return phase;
+}
+
+function stageCoordinates(phase, context = {}) {
+  const coordinates = { command: phase };
+  for (const key of ["segmentId", "dispatchId"]) {
+    const value = context[key];
+    if (typeof value === "string" && value.length > 0 && value.length <= 512) {
+      coordinates[key] = value;
+    }
+  }
+  if (Number.isSafeInteger(context.availableSlots)) {
+    coordinates.availableSlots = context.availableSlots;
+  }
+  return coordinates;
+}
+
+function acceptedWorkFromManifest(manifest) {
+  const stages = [
+    ...(Array.isArray(manifest.segments) ? manifest.segments : []),
+    ...(Array.isArray(manifest.turnAggregates) ? manifest.turnAggregates : []),
+  ];
+  const acceptedMaps = stages.filter((stage) => stage.receiptAcceptedAt).length;
+  return {
+    acceptedMaps,
+    acceptedReceipts: acceptedMaps,
+  };
+}
+
+function captureRequestInput(phase, error, state, manifest, context = {}) {
+  const policy = ADJUDICATION_PHASE_POLICIES[phase];
+  if (!policy) {
+    fail("INVALID_ADJUDICATION_PHASE", `Unknown adjudication phase ${phase}`);
+  }
+  return {
+    phase,
+    failureOwner: policy.failureOwner,
+    diagnostic: safeDiagnostic(error),
+    artifact: {
+      kind: context.artifactKind || policy.artifactKind,
+      coordinates: stageCoordinates(phase, context),
+    },
+    immutableDigests: {
+      contractDigest: state.contract.contractDigest,
+      ...(SHA256_PATTERN.test(manifest.frameDigest || "")
+        ? { frameDigest: manifest.frameDigest }
+        : {}),
+      ...(context.dispatchDigest ? { dispatchDigest: context.dispatchDigest } : {}),
+    },
+    acceptedWork: acceptedWorkFromManifest(manifest),
+    allowedActions: [...(context.allowedActions || policy.allowedActions)],
+  };
+}
+
+async function projectCapturedDiagnostic(workDir, state) {
+  const target = path.join(path.resolve(workDir), "failure-report.json");
+  let existing = {};
+  try {
+    existing = JSON.parse(await fs.promises.readFile(target, "utf8"));
+  } catch {
+    // The compatibility projection may not exist for this command boundary yet.
+  }
+  const request = state.activeRequest.request;
+  const projection = {
+    formatVersion: 1,
+    kind: "codex-handoff-captured-workflow-diagnostic",
+    capturedAt: request.createdAt,
+    phase: request.phase,
+    diagnostic: structuredClone(request.diagnostic),
+    ...(isPlainObject(existing.phaseTimingsMs)
+      ? { phaseTimingsMs: existing.phaseTimingsMs }
+      : {}),
+    ...(isPlainObject(existing.performanceMetrics)
+      ? { performanceMetrics: existing.performanceMetrics }
+      : {}),
+    ...(isPlainObject(existing.workerMetrics)
+      ? { workerMetrics: existing.workerMetrics }
+      : {}),
+    adjudication: publicAdjudicationReference(state),
+    workDir: path.resolve(workDir),
+  };
+  await fs.promises.writeFile(target, jsonText(projection), "utf8");
+}
+
+export async function captureAdjudicationFailure(
+  workDir,
+  phase,
+  error,
+  context = {},
+) {
+  if (!(await adjudicationEnabled(workDir))) throw error;
+  const state = await inspectAdjudication(workDir);
+  if (state.lifecycleState !== "RUNNING") throwActiveAdjudication(state);
+  let manifest = {};
+  try {
+    const document = await readJsonDocument(
+      path.join(path.resolve(workDir), "manifest.json"),
+      "ADJUDICATION_RUN_INVALID",
+      "Compression Task manifest",
+    );
+    if (isPlainObject(document.value)) manifest = document.value;
+  } catch {
+    // The immutable contract still permits an integrity diagnostic to be captured.
+  }
+  const captured = await createAdjudicationRequest(
+    workDir,
+    captureRequestInput(phase, error, state, manifest, context),
+  );
+  await projectCapturedDiagnostic(workDir, captured).catch(() => {});
+  throwCapturedAdjudication(error, captured);
+}
+
+export async function withAdjudicationCapture(
+  workDir,
+  phase,
+  operation,
+  context = {},
+) {
+  if (!(await adjudicationEnabled(workDir))) return operation();
+  const state = await inspectAdjudication(workDir);
+  if (state.lifecycleState !== "RUNNING") throwActiveAdjudication(state);
+  try {
+    return await operation();
+  } catch (error) {
+    if (error?.details?.adjudication) throw error;
+    return captureAdjudicationFailure(
+      workDir,
+      capturedPhase(phase, error),
+      error,
+      context,
+    );
+  }
 }
 
 export async function submitAdjudicationDecision(workDir, input) {
