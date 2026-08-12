@@ -16,6 +16,7 @@ import { MAP_GENERATION_OBSERVATION_MAX_BYTES } from "./lib/performance-calibrat
 import { ExportHandoffError } from "./lib/source-thread.mjs";
 import {
   acceptMapReceipt,
+  applyAdjudicationDecision,
   checkMapDispatch,
   checkReduceStage,
   claimMapDispatch,
@@ -43,6 +44,7 @@ function usage() {
   node export-handoff.mjs publish <WORK_DIR> [--keep-workdir]
   node export-handoff.mjs adjudicate <WORK_DIR> --inspect
   node export-handoff.mjs adjudicate <WORK_DIR> --submit <DECISION_FILE>
+  node export-handoff.mjs adjudicate <WORK_DIR> --apply
   node export-handoff.mjs retrieve <EVIDENCE_INDEX> <ANCHOR_ID>
   node export-handoff.mjs verify-evidence <EVIDENCE_INDEX>
 
@@ -178,6 +180,9 @@ function parseAdjudicationAction(args) {
   if (args.length === 2 && args[1] === "--inspect") {
     return { action: "inspect", workDir };
   }
+  if (args.length === 2 && args[1] === "--apply") {
+    return { action: "apply", workDir };
+  }
   if (args.length === 3 && args[1] === "--submit") {
     return {
       action: "submit",
@@ -185,7 +190,7 @@ function parseAdjudicationAction(args) {
       decisionPath: requirePositional(args, 2, "DECISION_FILE"),
     };
   }
-  throw new Error("adjudicate requires --inspect or --submit <DECISION_FILE>");
+  throw new Error("adjudicate requires --inspect, --submit <DECISION_FILE>, or --apply");
 }
 
 async function readBoundedObservationDocument(target) {
@@ -381,6 +386,7 @@ async function dispatch(command, args) {
   if (command === "adjudicate") {
     const action = parseAdjudicationAction(args);
     if (action.action === "inspect") return inspectAdjudication(action.workDir);
+    if (action.action === "apply") return applyAdjudicationDecision(action.workDir);
     return submitAdjudicationDecision(
       action.workDir,
       await readBoundedDecisionDocument(action.decisionPath),

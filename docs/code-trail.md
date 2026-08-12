@@ -783,3 +783,15 @@
 
 **Entry point**: Invoke any post-prepare command through `export-handoff.mjs`; on failure, use the returned `adjudication` reference or `adjudicate <WORK_DIR> --inspect`. No ordinary command advances until MA3 applies the submitted decision.
 **Test**: Authentic red failed 0/16 on missing capture/gating. Focused MA2 passes 19/19; MA0-MA2 plus MAP/TR1-TR6, provider, REDUCE, and publication regressions pass 70/70; the isolated staged MA2 snapshot passes 214/214 and the coexisting complete Node suite passes 215/215, both with zero skips; syntax checks and `git diff --check` pass.
+
+## 2026-08-12 Slice MA3 decision application and immutable supersession
+
+**Touched**:
+- `skills/export-codex-handoff/scripts/lib/adjudication.mjs:applyAdjudicationDecision / replayAdjudication` — appends immutable success/failure application records, restores `RUNNING`, and activates exactly one linked successor after a failed apply.
+- `skills/export-codex-handoff/scripts/lib/adjudication-actions.mjs:executeAdjudicationAction` — maps every retryable phase to its exact resume command, archives mutable REDUCE generations, supersedes only the named MAP generation, and relocates an unpublished pair.
+- `skills/export-codex-handoff/scripts/lib/task-workflow.mjs:applyAdjudicationDecision` and `scripts/export-handoff.mjs:adjudicate --apply` — expose the bounded MA3 executor through the managed CLI.
+- `skills/export-codex-handoff/tests/main-codex-adjudication-ma3.test.mjs:MA3 application matrix` — covers named-phase restoration, zero-write replay, prior MAP-generation preservation, latest-only REDUCE input, relocation, and linked-successor failure.
+- `docs/slice-plan-main-codex-adjudication.md:Slice MA3` and `docs/architecture.md:adjudication flow` — record MA3 as implemented while leaving degraded publication to MA4.
+
+**Entry point**: Submit one bound `retry_stage`, `regenerate_stage`, or `relocate_publication` decision, then run `adjudicate <WORK_DIR> --apply`; execute only the returned named resume command.
+**Test**: Authentic red failed 0/5 because `--apply` was absent. MA3 passes 23/23; MA0-MA3 pass 50/50; the coexisting complete Node suite passes 238/238 with zero skips; syntax checks and `git diff --check` pass.

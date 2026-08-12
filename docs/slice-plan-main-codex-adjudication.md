@@ -62,7 +62,7 @@ request or CLI response.
 | `validate-reduce --check` | `reduced.json` / REDUCE author | overwritable terminal report | `retry_stage`, `regenerate_stage`, `publish_degraded` | `continuation-grade-r5.test.mjs` preflight failure |
 | `publish` | checked REDUCE, source revision, budgets, and transactional outputs / publisher | overwritable terminal report; first-file rollback on pair failure | `retry_stage`, `relocate_publication`, `publish_degraded` | `compression.test.mjs` source/budget/transaction cases and R5 digest binding |
 | stage-specific CLI parse | the command named by the first managed `WORK_DIR` argument / coordinator | stderr and process exit only | `retry_stage`, `publish_degraded` | MA2 CLI table fixture |
-| `adjudicate --apply` | selected decision action / Main Codex | not implemented | retry a corrected decision or record a linked successor request | MA3 apply-failure fixture |
+| `adjudicate --apply` | selected decision action / Main Codex | immutable success/failure application plus exact resume contract | retry a corrected decision or record a linked successor request | MA3 application matrix |
 
 `prepare` validation before a managed manifest and Evidence Pack exist is bootstrap, not a live
 Compression Run. MA2 must capture any later CLI parse problem when a managed `WORK_DIR` can be
@@ -176,6 +176,19 @@ and degraded rendering.
 relocate a blocked publication pair, and resume only the named phase. A failed apply records a linked
 successor request, a replayed apply is idempotent, and REDUCE consumes only the latest active accepted
 MAP generation while prior generations remain audit-verifiable.
+
+**Implementation evidence**: `adjudication.mjs` extends the append-only chain with immutable
+`APPLIED` / `APPLICATION_FAILED` documents. `adjudication-actions.mjs` owns exact phase resume
+contracts, REDUCE candidate archival, generation-specific MAP supersession, and same-run publication
+relocation. The mutable manifest carries only active routing plus complete prior MAP-generation and
+publication-relocation audit records; the immutable contract and accepted artifacts are never rewritten.
+
+**Acceptance evidence**: the authentic MA3 red failed 0/5 because `adjudicate --apply` was absent.
+The completed fixture passes 23/23 across all retryable named-phase resume contracts, repeat-apply
+zero-write replay, REDUCE archival, accepted MAP supersession with unrelated generation preservation,
+latest-only REDUCE input, digest drift, provider-observation regeneration, safe publication relocation,
+and one linked successor after application failure. MA0-MA3 pass 50/50; the coexisting complete Node
+suite passes 238/238 with zero skips.
 
 ## Slice MA4 — Evidence-bounded Degraded Handoff
 

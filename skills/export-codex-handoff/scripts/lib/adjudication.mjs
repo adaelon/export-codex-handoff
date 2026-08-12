@@ -10,9 +10,11 @@ const ADJUDICATION_DIR = "adjudication";
 const EVENT_DIR = "events";
 const REQUEST_DIR = "requests";
 const DECISION_DIR = "decisions";
+const APPLICATION_DIR = "applications";
 const CONTRACT_KIND = "codex-handoff-adjudication-contract";
 const REQUEST_KIND = "codex-handoff-adjudication-request";
 const DECISION_KIND = "codex-handoff-adjudication-decision";
+const APPLICATION_KIND = "codex-handoff-adjudication-application";
 const EVENT_KIND = "codex-handoff-adjudication-event";
 const STATE_KIND = "codex-handoff-adjudication-state";
 const FORMAT_VERSION = 1;
@@ -20,6 +22,7 @@ const SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/;
 const RUN_ID_PATTERN = /^adjudication-run-[0-9a-f]{64}$/;
 const REQUEST_ID_PATTERN = /^adjudication-request-[0-9a-f-]{36}$/;
 const DECISION_ID_PATTERN = /^adjudication-decision-[0-9a-f-]{36}$/;
+const APPLICATION_ID_PATTERN = /^adjudication-application-[0-9a-f-]{36}$/;
 const TOKEN_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const EVENT_FILE_PATTERN = /^[0-9]{12}\.json$/;
 const WORKDIR_PREFIX = "codex-handoff-task-";
@@ -278,6 +281,7 @@ function adjudicationPaths(workDir) {
     events: path.join(root, EVENT_DIR),
     requests: path.join(root, REQUEST_DIR),
     decisions: path.join(root, DECISION_DIR),
+    applications: path.join(root, APPLICATION_DIR),
   };
   for (const [label, target] of Object.entries(paths)) {
     assertInsideWorkDir(workDir, target, `Adjudication ${label} path`);
@@ -533,7 +537,7 @@ function validateNamedScalarMap(value, options) {
 
 function validateRequestInput(input) {
   const code = "INVALID_ADJUDICATION_REQUEST";
-  requireExactKeys(input, [
+  const expectedKeys = [
     "phase",
     "failureOwner",
     "diagnostic",
@@ -541,7 +545,9 @@ function validateRequestInput(input) {
     "immutableDigests",
     "acceptedWork",
     "allowedActions",
-  ], code, "Adjudication Request input");
+    ...(Object.hasOwn(input, "predecessor") ? ["predecessor"] : []),
+  ];
+  requireExactKeys(input, expectedKeys, code, "Adjudication Request input");
   requireToken(input.phase, code, "phase");
   requireString(input.failureOwner, 128, code, "failureOwner");
   requireExactKeys(input.diagnostic, ["code", "message"], code, "diagnostic");
@@ -590,12 +596,26 @@ function validateRequestInput(input) {
   ) {
     fail(code, "allowedActions must contain unique bounded decision actions");
   }
+  if (Object.hasOwn(input, "predecessor")) {
+    requireExactKeys(
+      input.predecessor,
+      ["requestId", "decisionId"],
+      code,
+      "predecessor",
+    );
+    if (
+      !REQUEST_ID_PATTERN.test(input.predecessor.requestId || "") ||
+      !DECISION_ID_PATTERN.test(input.predecessor.decisionId || "")
+    ) {
+      fail(code, "predecessor must name one request and its submitted decision");
+    }
+  }
   return structuredClone(input);
 }
 
 function validateRequestDocument(request, context) {
   const code = "ADJUDICATION_DOCUMENT_INVALID";
-  requireExactKeys(request, [
+  const expectedKeys = [
     "formatVersion",
     "kind",
     "requestId",
@@ -609,7 +629,9 @@ function validateRequestDocument(request, context) {
     "immutableDigests",
     "acceptedWork",
     "allowedActions",
-  ], code, "Adjudication Request document");
+    ...(Object.hasOwn(request, "predecessor") ? ["predecessor"] : []),
+  ];
+  requireExactKeys(request, expectedKeys, code, "Adjudication Request document");
   if (
     request.formatVersion !== FORMAT_VERSION ||
     request.kind !== REQUEST_KIND ||
@@ -628,6 +650,7 @@ function validateRequestDocument(request, context) {
     immutableDigests: request.immutableDigests,
     acceptedWork: request.acceptedWork,
     allowedActions: request.allowedActions,
+    ...(request.predecessor ? { predecessor: request.predecessor } : {}),
   });
   return request;
 }
@@ -738,6 +761,105 @@ function validateDecisionDocument(decision, context) {
   return decision;
 }
 
+function validateApplicationValue(value, code, label, depth = 0) {
+  if (depth > 4) fail(code, `${label} is nested too deeply`);
+  if (value === null || typeof value === "boolean") return;
+  if (typeof value === "string") {
+    requireString(value, 4096, code, label);
+    return;
+  }
+  if (Number.isSafeInteger(value)) return;
+  if (Array.isArray(value)) {
+    if (value.length > 32) fail(code, `${label} has too many entries`);
+    value.forEach((entry, index) => (
+      validateApplicationValue(entry, code, `${label}[${index}]`, depth + 1)
+    ));
+    return;
+  }
+  requirePlainObject(value, code, label);
+  const entries = Object.entries(value);
+  if (entries.length > 32) fail(code, `${label} has too many fields`);
+  for (const [key, nested] of entries) {
+    requireToken(key, code, `${label} field`);
+    validateApplicationValue(nested, code, `${label}.${key}`, depth + 1);
+  }
+}
+
+function validateApplicationDocument(application, context) {
+  const code = "ADJUDICATION_DOCUMENT_INVALID";
+  const success = application?.status === "APPLIED";
+  requireExactKeys(application, success ? [
+    "formatVersion",
+    "kind",
+    "applicationId",
+    "runId",
+    "contractDigest",
+    "createdAt",
+    "requestId",
+    "requestDigest",
+    "decisionId",
+    "decisionDigest",
+    "status",
+    "result",
+  ] : [
+    "formatVersion",
+    "kind",
+    "applicationId",
+    "runId",
+    "contractDigest",
+    "createdAt",
+    "requestId",
+    "requestDigest",
+    "decisionId",
+    "decisionDigest",
+    "status",
+    "diagnostic",
+    "successorRequestId",
+    "successorRequestDigest",
+  ], code, "Adjudication Application document");
+  if (
+    application.formatVersion !== FORMAT_VERSION ||
+    application.kind !== APPLICATION_KIND ||
+    !APPLICATION_ID_PATTERN.test(application.applicationId || "") ||
+    application.runId !== context.contract.runId ||
+    application.contractDigest !== context.contractDigest ||
+    !REQUEST_ID_PATTERN.test(application.requestId || "") ||
+    !DECISION_ID_PATTERN.test(application.decisionId || "") ||
+    !["APPLIED", "APPLICATION_FAILED"].includes(application.status)
+  ) {
+    fail(code, "Adjudication Application is not bound to its immutable contract");
+  }
+  requireIsoTimestamp(application.createdAt, code, "application.createdAt");
+  requireDigest(application.requestDigest, code, "application.requestDigest");
+  requireDigest(application.decisionDigest, code, "application.decisionDigest");
+  if (success) {
+    validateApplicationValue(application.result, code, "application.result");
+  } else {
+    requireExactKeys(
+      application.diagnostic,
+      ["code", "message"],
+      code,
+      "application.diagnostic",
+    );
+    requireToken(application.diagnostic.code, code, "application.diagnostic.code");
+    requireString(
+      application.diagnostic.message,
+      1024,
+      code,
+      "application.diagnostic.message",
+    );
+    if (!REQUEST_ID_PATTERN.test(application.successorRequestId || "")) {
+      fail(code, "Failed application must name one successor request");
+    }
+    requireDigest(
+      application.successorRequestDigest,
+      code,
+      "application.successorRequestDigest",
+    );
+  }
+  return application;
+}
+
 function eventDigest(eventWithoutDigest) {
   return `sha256:${sha256Text(canonicalStringify(eventWithoutDigest))}`;
 }
@@ -795,8 +917,13 @@ function validateEvent(event, context, expectedSequence, previousEventDigest) {
     event.runId !== context.contract.runId ||
     event.contractDigest !== context.contractDigest ||
     event.previousEventDigest !== previousEventDigest ||
-    !["request_opened", "decision_submitted"].includes(event.eventType) ||
-    !["request", "decision"].includes(event.documentKind)
+    ![
+      "request_opened",
+      "decision_submitted",
+      "application_succeeded",
+      "application_failed",
+    ].includes(event.eventType) ||
+    !["request", "decision", "application"].includes(event.documentKind)
   ) {
     fail(code, `Adjudication event ${expectedSequence} breaks the append-only chain`);
   }
@@ -806,12 +933,13 @@ function validateEvent(event, context, expectedSequence, previousEventDigest) {
   return event;
 }
 
-async function listJsonFiles(target, label) {
+async function listJsonFiles(target, label, options = {}) {
   let entries;
   try {
     entries = await fs.promises.readdir(target, { withFileTypes: true });
   } catch (error) {
     if (error.code === "ENOENT") {
+      if (options.allowMissing) return [];
       fail("ADJUDICATION_EVENT_CHAIN_INVALID", `${label} is missing`);
     }
     throw error;
@@ -835,7 +963,8 @@ async function loadBoundDocument(target, expectedDigest, kind, context) {
     );
   }
   if (kind === "request") validateRequestDocument(document.value, context);
-  else validateDecisionDocument(document.value, context);
+  else if (kind === "decision") validateDecisionDocument(document.value, context);
+  else validateApplicationDocument(document.value, context);
   return document.value;
 }
 
@@ -852,10 +981,16 @@ function publicRequestState(entry) {
       decisionDocumentPath: entry.decisionDocumentPath,
       decision: entry.decision,
     } : {}),
+    ...(entry.application ? {
+      applicationId: entry.applicationId,
+      applicationDigest: entry.applicationDigest,
+      applicationDocumentPath: entry.applicationDocumentPath,
+      application: entry.application,
+    } : {}),
   };
 }
 
-function buildPublicState(context, paths, events, requests) {
+function buildPublicState(context, paths, events, requests, applications = []) {
   const active = requests.find((entry) => [
     "AWAITING_ADJUDICATION",
     "APPLYING_ADJUDICATION",
@@ -889,24 +1024,37 @@ function buildPublicState(context, paths, events, requests) {
     },
     activeRequest,
     requests: publicRequests,
+    applications: applications.map((entry) => ({
+      applicationId: entry.applicationId,
+      applicationDigest: entry.applicationDigest,
+      documentPath: entry.documentPath,
+      application: entry.application,
+    })),
   };
 }
 
 async function replayAdjudication(context) {
   const paths = adjudicationPaths(context.workDir);
   if (!(await pathExists(paths.root))) {
-    return buildPublicState(context, paths, [], []);
+    return buildPublicState(context, paths, [], [], []);
   }
-  const [eventNames, requestNames, decisionNames] = await Promise.all([
+  const [eventNames, requestNames, decisionNames, applicationNames] = await Promise.all([
     listJsonFiles(paths.events, "Adjudication event directory"),
     listJsonFiles(paths.requests, "Adjudication request directory"),
     listJsonFiles(paths.decisions, "Adjudication decision directory"),
+    listJsonFiles(
+      paths.applications,
+      "Adjudication application directory",
+      { allowMissing: true },
+    ),
   ]);
   const events = [];
   const requests = [];
+  const applications = [];
   const requestById = new Map();
   const referencedRequests = new Set();
   const referencedDecisions = new Set();
+  const referencedApplications = new Set();
   let previousEventDigest = null;
 
   for (let index = 0; index < eventNames.length; index += 1) {
@@ -968,7 +1116,7 @@ async function replayAdjudication(context) {
       requests.push(entry);
       requestById.set(entry.requestId, entry);
       referencedRequests.add(`${entry.requestId}.json`);
-    } else {
+    } else if (event.eventType === "decision_submitted") {
       if (event.documentKind !== "decision" || !DECISION_ID_PATTERN.test(event.documentId)) {
         fail(
           "ADJUDICATION_EVENT_CHAIN_INVALID",
@@ -996,19 +1144,106 @@ async function replayAdjudication(context) {
       request.decisionDocumentPath = documentPath;
       request.decision = decision;
       referencedDecisions.add(`${decision.decisionId}.json`);
+    } else {
+      if (
+        event.documentKind !== "application" ||
+        !APPLICATION_ID_PATTERN.test(event.documentId)
+      ) {
+        fail(
+          "ADJUDICATION_EVENT_CHAIN_INVALID",
+          "Application event must reference exactly one application document",
+        );
+      }
+      const documentPath = path.join(paths.applications, `${event.documentId}.json`);
+      const application = await loadBoundDocument(
+        documentPath,
+        event.documentDigest,
+        "application",
+        context,
+      );
+      const request = requestById.get(application.requestId);
+      if (
+        !request ||
+        request.status !== "APPLYING_ADJUDICATION" ||
+        request.requestDigest !== application.requestDigest ||
+        request.decisionId !== application.decisionId ||
+        request.decisionDigest !== application.decisionDigest
+      ) {
+        fail(
+          "ADJUDICATION_EVENT_CHAIN_INVALID",
+          "Application does not name the one applying request and decision",
+        );
+      }
+      if (
+        (event.eventType === "application_succeeded") !==
+        (application.status === "APPLIED")
+      ) {
+        fail(
+          "ADJUDICATION_EVENT_CHAIN_INVALID",
+          "Application event and application status disagree",
+        );
+      }
+      request.status = application.status;
+      request.applicationId = application.applicationId;
+      request.applicationDigest = event.documentDigest;
+      request.applicationDocumentPath = documentPath;
+      request.application = application;
+      applications.push({
+        applicationId: application.applicationId,
+        applicationDigest: event.documentDigest,
+        documentPath,
+        application,
+      });
+      referencedApplications.add(`${application.applicationId}.json`);
+
+      if (application.status === "APPLICATION_FAILED") {
+        const successorPath = path.join(
+          paths.requests,
+          `${application.successorRequestId}.json`,
+        );
+        const successor = await loadBoundDocument(
+          successorPath,
+          application.successorRequestDigest,
+          "request",
+          context,
+        );
+        if (
+          successor.requestId !== application.successorRequestId ||
+          requestById.has(successor.requestId) ||
+          successor.predecessor?.requestId !== request.requestId ||
+          successor.predecessor?.decisionId !== request.decisionId
+        ) {
+          fail(
+            "ADJUDICATION_EVENT_CHAIN_INVALID",
+            "Failed application does not activate one correctly linked successor request",
+          );
+        }
+        const successorEntry = {
+          requestId: successor.requestId,
+          requestDigest: application.successorRequestDigest,
+          documentPath: successorPath,
+          status: "AWAITING_ADJUDICATION",
+          request: successor,
+        };
+        requests.push(successorEntry);
+        requestById.set(successorEntry.requestId, successorEntry);
+        referencedRequests.add(`${successorEntry.requestId}.json`);
+      }
     }
   }
 
   if (
     canonicalStringify(requestNames) !== canonicalStringify([...referencedRequests].sort()) ||
-    canonicalStringify(decisionNames) !== canonicalStringify([...referencedDecisions].sort())
+    canonicalStringify(decisionNames) !== canonicalStringify([...referencedDecisions].sort()) ||
+    canonicalStringify(applicationNames) !==
+      canonicalStringify([...referencedApplications].sort())
   ) {
     fail(
       "ADJUDICATION_EVENT_CHAIN_INVALID",
       "Adjudication documents and append-only events do not match",
     );
   }
-  return buildPublicState(context, paths, events, requests);
+  return buildPublicState(context, paths, events, requests, applications);
 }
 
 export async function inspectAdjudication(workDir) {
@@ -1020,6 +1255,7 @@ async function ensureAdjudicationDirectories(paths) {
   await fs.promises.mkdir(paths.events, { recursive: true });
   await fs.promises.mkdir(paths.requests, { recursive: true });
   await fs.promises.mkdir(paths.decisions, { recursive: true });
+  await fs.promises.mkdir(paths.applications, { recursive: true });
 }
 
 async function appendEvent(context, state, eventInput) {
@@ -1304,4 +1540,174 @@ export async function submitAdjudicationDecision(workDir, input) {
     throw error;
   }
   return inspectAdjudication(context.workDir);
+}
+
+function appliedResponse(state, applied) {
+  const latestApplication = state.applications.at(-1)?.application;
+  const appliedRequest = latestApplication?.status === "APPLIED"
+    ? state.requests.find((entry) => entry.requestId === latestApplication.requestId)
+    : null;
+  if (!appliedRequest) {
+    fail(
+      "ADJUDICATION_DECISION_NOT_APPLYING",
+      "No successfully applied Adjudication Decision is available for replay",
+    );
+  }
+  return {
+    ...state,
+    applied,
+    activeRequest: appliedRequest,
+    application: appliedRequest.application,
+    result: structuredClone(appliedRequest.application.result),
+  };
+}
+
+async function recordSuccessfulApplication(context, state, result) {
+  const active = state.activeRequest;
+  const createdAt = new Date().toISOString();
+  const applicationId = `adjudication-application-${crypto.randomUUID()}`;
+  const application = {
+    formatVersion: FORMAT_VERSION,
+    kind: APPLICATION_KIND,
+    applicationId,
+    runId: context.contract.runId,
+    contractDigest: context.contractDigest,
+    createdAt,
+    requestId: active.requestId,
+    requestDigest: active.requestDigest,
+    decisionId: active.decisionId,
+    decisionDigest: active.decisionDigest,
+    status: "APPLIED",
+    result: structuredClone(result),
+  };
+  validateApplicationDocument(application, context);
+  const paths = adjudicationPaths(context.workDir);
+  const documentPath = path.join(paths.applications, `${applicationId}.json`);
+  await writeJsonExclusive(documentPath, application);
+  const applicationText = await fs.promises.readFile(documentPath, "utf8");
+  const applicationDigest = textDigest(applicationText);
+  try {
+    await appendEvent(context, state, {
+      eventType: "application_succeeded",
+      documentKind: "application",
+      documentId: applicationId,
+      documentDigest: applicationDigest,
+      recordedAt: createdAt,
+    });
+  } catch (error) {
+    await fs.promises.rm(documentPath, { force: true }).catch(() => {});
+    throw error;
+  }
+  return replayAdjudication(context);
+}
+
+async function recordFailedApplication(context, state, error) {
+  const active = state.activeRequest;
+  const createdAt = new Date().toISOString();
+  const successorRequestId = `adjudication-request-${crypto.randomUUID()}`;
+  const successorRequest = {
+    formatVersion: FORMAT_VERSION,
+    kind: REQUEST_KIND,
+    requestId: successorRequestId,
+    runId: context.contract.runId,
+    contractDigest: context.contractDigest,
+    createdAt,
+    phase: active.request.phase,
+    failureOwner: active.request.failureOwner,
+    diagnostic: safeDiagnostic(error),
+    artifact: structuredClone(active.request.artifact),
+    immutableDigests: structuredClone(active.request.immutableDigests),
+    acceptedWork: structuredClone(active.request.acceptedWork),
+    allowedActions: [...active.request.allowedActions],
+    predecessor: {
+      requestId: active.requestId,
+      decisionId: active.decisionId,
+    },
+  };
+  validateRequestDocument(successorRequest, context);
+
+  const paths = adjudicationPaths(context.workDir);
+  const successorPath = path.join(paths.requests, `${successorRequestId}.json`);
+  await writeJsonExclusive(successorPath, successorRequest);
+  const successorText = await fs.promises.readFile(successorPath, "utf8");
+  const successorRequestDigest = textDigest(successorText);
+
+  const applicationId = `adjudication-application-${crypto.randomUUID()}`;
+  const application = {
+    formatVersion: FORMAT_VERSION,
+    kind: APPLICATION_KIND,
+    applicationId,
+    runId: context.contract.runId,
+    contractDigest: context.contractDigest,
+    createdAt,
+    requestId: active.requestId,
+    requestDigest: active.requestDigest,
+    decisionId: active.decisionId,
+    decisionDigest: active.decisionDigest,
+    status: "APPLICATION_FAILED",
+    diagnostic: safeDiagnostic(error),
+    successorRequestId,
+    successorRequestDigest,
+  };
+  validateApplicationDocument(application, context);
+  const applicationPath = path.join(paths.applications, `${applicationId}.json`);
+  try {
+    await writeJsonExclusive(applicationPath, application);
+    const applicationText = await fs.promises.readFile(applicationPath, "utf8");
+    await appendEvent(context, state, {
+      eventType: "application_failed",
+      documentKind: "application",
+      documentId: applicationId,
+      documentDigest: textDigest(applicationText),
+      recordedAt: createdAt,
+    });
+  } catch (recordingError) {
+    await Promise.all([
+      fs.promises.rm(applicationPath, { force: true }).catch(() => {}),
+      fs.promises.rm(successorPath, { force: true }).catch(() => {}),
+    ]);
+    throw recordingError;
+  }
+  return replayAdjudication(context);
+}
+
+export async function applyAdjudicationDecision(workDir, executeAction) {
+  const context = await loadContractContext(workDir);
+  const state = await replayAdjudication(context);
+  if (state.lifecycleState === "RUNNING") return appliedResponse(state, false);
+  if (
+    state.lifecycleState !== "APPLYING_ADJUDICATION" ||
+    !state.activeRequest?.decision
+  ) {
+    fail(
+      "ADJUDICATION_DECISION_NOT_APPLYING",
+      "adjudicate --apply requires exactly one submitted, unapplied decision",
+    );
+  }
+  if (typeof executeAction !== "function") {
+    fail(
+      "ADJUDICATION_APPLICATION_UNAVAILABLE",
+      "No phase-specific Adjudication Decision executor is installed",
+    );
+  }
+
+  try {
+    const result = await executeAction({
+      workDir: context.workDir,
+      contract: structuredClone(context.contract),
+      request: structuredClone(state.activeRequest.request),
+      decision: structuredClone(state.activeRequest.decision),
+    });
+    validateApplicationValue(
+      result,
+      "INVALID_ADJUDICATION_APPLICATION",
+      "application result",
+    );
+    const applied = await recordSuccessfulApplication(context, state, result);
+    return appliedResponse(applied, true);
+  } catch (error) {
+    if (error?.details?.adjudication) throw error;
+    const failed = await recordFailedApplication(context, state, error);
+    throwCapturedAdjudication(error, failed);
+  }
 }

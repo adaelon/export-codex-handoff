@@ -3,6 +3,10 @@ import path from "node:path";
 import {
   prepareCompressionTask as prepareCompressionTaskCore,
 } from "./task-workflow-core.mjs";
+import {
+  applyAdjudicationDecision as applyAdjudicationDecisionCore,
+} from "./adjudication.mjs";
+import { executeAdjudicationAction } from "./adjudication-actions.mjs";
 
 export {
   createAdjudicationRequest,
@@ -31,4 +35,8 @@ export async function prepareCompressionTask(options, dependencies = {}) {
     ...prepared,
     evidenceIndexWorkPath: path.join(prepared.workDir, "evidence-index.json"),
   };
+}
+
+export async function applyAdjudicationDecision(workDir) {
+  return applyAdjudicationDecisionCore(workDir, executeAdjudicationAction);
 }
