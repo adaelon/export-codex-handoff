@@ -2,9 +2,16 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { initializeAdjudicationContract } from "./adjudication.mjs";
+import {
+  initializeAdjudicationContract,
+  inspectAdjudication,
+} from "./adjudication.mjs";
 import { buildEvidencePack } from "./evidence-pack.mjs";
-import { canonicalStringify, sha256Text } from "./evidence-addressing.mjs";
+import {
+  canonicalStringify,
+  hashFileRevision,
+  sha256Text,
+} from "./evidence-addressing.mjs";
 import {
   buildFrameInput,
   compressionFrameDigest,
@@ -15,6 +22,7 @@ import {
   attachEvidenceKeyMap,
   attachSemanticCoverage,
   buildEvidenceIndex,
+  retrieveEvidence,
   validateEvidenceIndex,
   verifyEvidenceIndex,
 } from "./evidence-index.mjs";
@@ -67,6 +75,7 @@ import {
   validateReduceGenerationMetric,
 } from "./performance-calibration.mjs";
 import { renderHandoff } from "./render-handoff.mjs";
+import { renderDegradedHandoff } from "./render-degraded-handoff.mjs";
 import {
   buildActionReadyConsumerContract,
   buildActionReadySuggestedContinuation,
@@ -94,6 +103,7 @@ const MAP_GENERATION_METRIC_STATE_FIELDS = [
   "metricDigest",
 ];
 const SHA256_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
+const MAX_DEGRADED_ACCEPTED_CLAIMS = 8;
 
 const ACTION_READY_OUTPUT_CONTRACT = Object.freeze({
   formatVersion: 1,
@@ -3175,6 +3185,531 @@ export async function checkReduceStage(workDir, calibration = undefined) {
     "validate-reduce",
     () => checkReduceStageInternal(workDir, calibration),
   );
+}
+
+function filteredPreservationLedger(index, retainedAnchorIds, sourceRevision) {
+  const retained = new Set(retainedAnchorIds);
+  const complete = retained.size === index.anchors.length;
+  return {
+    sourceRevision,
+    requiredAnchors: index.preservationLedger.requiredAnchors.filter(
+      (anchorId) => retained.has(anchorId),
+    ),
+    exactIdentifiers: index.preservationLedger.exactIdentifiers.filter(
+      (identifier) => (
+        identifier.anchors.length > 0 &&
+        identifier.anchors.every((anchorId) => retained.has(anchorId))
+      ),
+    ),
+    criticalCategories: complete
+      ? [...index.preservationLedger.criticalCategories]
+      : [],
+  };
+}
+
+function buildDegradedEvidenceSubset(index, entries, source, workspace) {
+  const retainedAnchorIds = entries.map((entry) => entry.anchor.anchorId);
+  return buildEvidenceIndex({
+    sessionId: index.sessionId,
+    source,
+    workspace,
+    entries,
+    preservationLedger: filteredPreservationLedger(
+      index,
+      retainedAnchorIds,
+      source.sourceRevision,
+    ),
+  });
+}
+
+async function tryVerifiedEvidenceCandidate(candidate, scope) {
+  try {
+    await verifyEvidenceIndex(candidate);
+    return { index: candidate, scope };
+  } catch {
+    return null;
+  }
+}
+
+async function selectDegradedEvidenceIndex(index) {
+  try {
+    await verifyEvidenceIndex(index);
+    return {
+      index,
+      scope: "complete",
+      verificationFailureCode: null,
+    };
+  } catch (error) {
+    const candidates = [];
+    const sourceEntries = index.anchors.filter(
+      (entry) => entry.anchor.sourceKind === "source_thread",
+    );
+    const workspaceEntries = index.anchors.filter(
+      (entry) => entry.anchor.sourceKind === "workspace",
+    );
+
+    if (sourceEntries.length > 0) {
+      const sourceOnly = buildDegradedEvidenceSubset(
+        index,
+        sourceEntries,
+        index.source,
+        index.workspace,
+      );
+      const verified = await tryVerifiedEvidenceCandidate(sourceOnly, "verified subset: source");
+      if (verified) candidates.push(verified);
+    }
+
+    let currentSource = null;
+    try {
+      currentSource = await hashFileRevision(index.source.rolloutPath);
+    } catch {
+      // A published Evidence Index must remain independently verifiable.
+    }
+    if (currentSource) {
+      const currentSourceMetadata = {
+        rolloutPath: index.source.rolloutPath,
+        sourceRevision: currentSource.sourceRevision,
+        sourceBytes: currentSource.sourceBytes,
+      };
+      if (workspaceEntries.length > 0) {
+        const workspaceOnly = buildDegradedEvidenceSubset(
+          index,
+          workspaceEntries,
+          currentSourceMetadata,
+          index.workspace,
+        );
+        const verified = await tryVerifiedEvidenceCandidate(
+          workspaceOnly,
+          "verified subset: workspace",
+        );
+        if (verified) candidates.push(verified);
+      }
+      const empty = buildDegradedEvidenceSubset(
+        index,
+        [],
+        currentSourceMetadata,
+        { cwd: index.workspace.cwd, sourceRevision: null },
+      );
+      const verifiedEmpty = await tryVerifiedEvidenceCandidate(
+        empty,
+        "verified subset: adjudication only",
+      );
+      if (verifiedEmpty) candidates.push(verifiedEmpty);
+    }
+
+    candidates.sort((left, right) => (
+      right.index.anchors.length - left.index.anchors.length ||
+      left.scope.localeCompare(right.scope, "en")
+    ));
+    const selected = candidates[0];
+    if (!selected) {
+      throw new ExportHandoffError(
+        "DEGRADED_EVIDENCE_UNAVAILABLE",
+        "No independently verifiable Evidence Index subset is available",
+        { verificationFailureCode: error.code || "ERROR" },
+      );
+    }
+    return {
+      ...selected,
+      verificationFailureCode: error.code || "ERROR",
+    };
+  }
+}
+
+function allAnchorsRetained(anchors, retainedAnchorIds) {
+  return (
+    Array.isArray(anchors) &&
+    anchors.length > 0 &&
+    anchors.every((anchorId) => retainedAnchorIds.has(anchorId))
+  );
+}
+
+async function degradedCurrentGoal(
+  evidencePack,
+  publishedIndex,
+  retainedAnchorIds,
+) {
+  const current = evidencePack?.sourceContinuation?.currentGoal ||
+    (evidencePack?.turns || [])
+      .flatMap((turn) => turn.userMessages || [])
+      .at(-1) ||
+    null;
+  if (
+    typeof current?.text === "string" &&
+    current.text.length > 0 &&
+    allAnchorsRetained(current.anchors, retainedAnchorIds)
+  ) {
+    for (const anchorId of current.anchors) {
+      try {
+        const retrieved = await retrieveEvidence(publishedIndex, anchorId);
+        if (retrieved.content === current.text) {
+          return {
+            status: "verified",
+            text: retrieved.content,
+            anchors: [...current.anchors],
+          };
+        }
+      } catch {
+        // The full Anchor set and exact text must both verify before publication.
+      }
+    }
+  }
+  return {
+    status: "unavailable",
+    reason: "the current goal or one of its supporting Evidence Anchors did not verify",
+  };
+}
+
+function degradedTerminalState(evidencePack, retainedAnchorIds) {
+  const terminalClaim = evidencePack?.terminalStateClaim;
+  if (
+    typeof terminalClaim?.text === "string" &&
+    terminalClaim.text.length > 0 &&
+    allAnchorsRetained(terminalClaim.anchors, retainedAnchorIds)
+  ) {
+    return {
+      status: "verified",
+      text: terminalClaim.text,
+      anchors: [...terminalClaim.anchors],
+    };
+  }
+  return {
+    status: "unavailable",
+    reason: "the deterministic Terminal-State Claim did not retain a complete verified Anchor set",
+  };
+}
+
+function degradedDiagnosticChain(state) {
+  const byId = new Map(state.requests.map((entry) => [entry.requestId, entry]));
+  const diagnostics = [];
+  let current = state.activeRequest;
+  while (current) {
+    diagnostics.push({
+      requestId: current.requestId,
+      phase: current.request.phase,
+      failureOwner: current.request.failureOwner,
+      code: current.request.diagnostic.code,
+      message: current.request.diagnostic.message,
+      ...(current.application?.status === "APPLICATION_FAILED" ? {
+        applicationFailure: structuredClone(current.application.diagnostic),
+      } : {}),
+    });
+    current = current.request.predecessor
+      ? byId.get(current.request.predecessor.requestId) || null
+      : null;
+  }
+  return diagnostics;
+}
+
+async function collectDegradedAcceptedWork(
+  manifest,
+  frozenFrame,
+  retainedAnchorIds,
+  acceptedMaps,
+) {
+  const acceptedWork = {
+    acceptedMaps,
+    verifiedMaps: 0,
+    stages: [],
+    omittedClaims: 0,
+  };
+  if (!manifest || !frozenFrame || acceptedMaps === 0) return acceptedWork;
+
+  let retainedClaims = 0;
+  const stages = [
+    ...(manifest.segments || []),
+    ...(manifest.turnAggregates || []),
+  ].filter((stage) => stage.receiptAcceptedAt);
+  for (const stage of stages) {
+    try {
+      const summary = await readAcceptedMap(stage, frozenFrame);
+      const receiptText = await fs.promises.readFile(stage.receiptPath, "utf8");
+      const claims = [];
+      for (const claim of listMapClaims(summary)) {
+        if (!allAnchorsRetained(claim.anchors, retainedAnchorIds)) {
+          acceptedWork.omittedClaims += 1;
+          continue;
+        }
+        if (retainedClaims >= MAX_DEGRADED_ACCEPTED_CLAIMS) {
+          acceptedWork.omittedClaims += 1;
+          continue;
+        }
+        claims.push(claim);
+        retainedClaims += 1;
+      }
+      acceptedWork.stages.push({
+        segmentId: stage.segmentId,
+        receiptDigest: `sha256:${sha256Text(receiptText)}`,
+        claims,
+      });
+      acceptedWork.verifiedMaps += 1;
+    } catch {
+      // The accepted count remains visible while unverified artifact bodies stay omitted.
+    }
+  }
+  return acceptedWork;
+}
+
+function assertDegradedPublicationTarget(workDir, target, label) {
+  if (!path.isAbsolute(target)) {
+    throw new ExportHandoffError(
+      "INVALID_PUBLICATION_TARGET",
+      `${label} must be absolute`,
+    );
+  }
+  const relative = path.relative(workDir, path.resolve(target));
+  if (relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative))) {
+    throw new ExportHandoffError(
+      "INVALID_PUBLICATION_TARGET",
+      `${label} must remain outside the disposable Compression Task directory`,
+    );
+  }
+}
+
+function degradedPublicationTargets(state, contract, workDir) {
+  let outputPath = contract.outputPath;
+  let evidenceIndexPath = contract.evidenceIndexPath;
+  for (const entry of state.applications) {
+    const result = entry.application.result;
+    if (
+      entry.application.status === "APPLIED" &&
+      result?.effect === "publication_relocated"
+    ) {
+      outputPath = result.outputPath;
+      evidenceIndexPath = result.evidenceIndexPath;
+    }
+  }
+  outputPath = path.resolve(outputPath);
+  evidenceIndexPath = path.resolve(evidenceIndexPath);
+  assertDegradedPublicationTarget(workDir, outputPath, "Degraded Handoff path");
+  assertDegradedPublicationTarget(
+    workDir,
+    evidenceIndexPath,
+    "Degraded Evidence Index path",
+  );
+  if (outputPath === evidenceIndexPath) {
+    throw new ExportHandoffError(
+      "INVALID_PUBLICATION_TARGET",
+      "Degraded publication targets must be distinct",
+    );
+  }
+  return { outputPath, evidenceIndexPath };
+}
+
+async function degradedManifest(workDir, contract) {
+  try {
+    const manifest = await loadManifest(workDir);
+    if (
+      manifest.sessionId !== contract.sessionId ||
+      manifest.sourceRevision !== contract.sourceRevision ||
+      path.resolve(manifest.workDir) !== workDir
+    ) {
+      throw new ExportHandoffError(
+        "ADJUDICATION_RUN_INVALID",
+        "Mutable manifest no longer matches the immutable Adjudication contract",
+      );
+    }
+    return { manifest, diagnosticCode: null };
+  } catch (error) {
+    return { manifest: null, diagnosticCode: error.code || "ERROR" };
+  }
+}
+
+export async function publishDegradedHandoff({
+  workDir,
+  contract,
+  request,
+  decision,
+}) {
+  const resolved = path.resolve(workDir);
+  const state = await inspectAdjudication(resolved);
+  if (
+    state.lifecycleState !== "APPLYING_ADJUDICATION" ||
+    state.activeRequest?.requestId !== request.requestId ||
+    state.activeRequest?.decisionId !== decision.decisionId ||
+    decision.action.type !== "publish_degraded"
+  ) {
+    throw new ExportHandoffError(
+      "ADJUDICATION_DECISION_BINDING_MISMATCH",
+      "Degraded publication requires the exact active publish_degraded decision",
+    );
+  }
+
+  const { manifest, diagnosticCode: manifestDiagnostic } = await degradedManifest(
+    resolved,
+    contract,
+  );
+  const evidencePackPath = path.join(resolved, "evidence-pack.json");
+  const evidenceIndexWorkPath = path.join(resolved, "evidence-index.json");
+  assertInsideWorkDir(resolved, evidencePackPath, "Degraded Evidence Pack path");
+  assertInsideWorkDir(resolved, evidenceIndexWorkPath, "Degraded Evidence Index path");
+  const evidencePack = await readJson(evidencePackPath, "Evidence Pack");
+  if (
+    evidencePack?.source?.sessionId !== contract.sessionId ||
+    evidencePack?.source?.sourceRevision !== contract.sourceRevision
+  ) {
+    throw new ExportHandoffError(
+      "ADJUDICATION_ARTIFACT_INTEGRITY_MISMATCH",
+      "Evidence Pack no longer matches the immutable Adjudication contract",
+    );
+  }
+  const originalIndex = validateEvidenceIndex(
+    await readJson(evidenceIndexWorkPath, "Evidence Index"),
+  );
+  if (
+    originalIndex.sessionId !== contract.sessionId ||
+    originalIndex.source.sourceRevision !== contract.sourceRevision
+  ) {
+    throw new ExportHandoffError(
+      "ADJUDICATION_ARTIFACT_INTEGRITY_MISMATCH",
+      "Evidence Index no longer matches the immutable Adjudication contract",
+    );
+  }
+  const evidenceSelection = await selectDegradedEvidenceIndex(originalIndex);
+  const publishedIndex = evidenceSelection.index;
+  const retainedAnchorIds = new Set(
+    publishedIndex.anchors.map((entry) => entry.anchor.anchorId),
+  );
+
+  let frozenFrame = null;
+  if (manifest) {
+    try {
+      frozenFrame = await loadFrozenFrame(manifest);
+    } catch {
+      // Degraded publication never promotes a missing or invalid Frame.
+    }
+  }
+  const acceptedMaps = Number.isSafeInteger(request.acceptedWork?.acceptedMaps)
+    ? request.acceptedWork.acceptedMaps
+    : 0;
+  const acceptedWork = await collectDegradedAcceptedWork(
+    manifest,
+    frozenFrame,
+    retainedAnchorIds,
+    acceptedMaps,
+  );
+  const currentGoal = await degradedCurrentGoal(
+    evidencePack,
+    publishedIndex,
+    retainedAnchorIds,
+  );
+  const terminalState = degradedTerminalState(evidencePack, retainedAnchorIds);
+  const omissions = [{
+    field: "normal REDUCE result",
+    reason: "omitted because publish_degraded never treats a mutable or failed REDUCE candidate as verified",
+  }];
+  if (currentGoal.status !== "verified") {
+    omissions.push({ field: "current goal", reason: currentGoal.reason });
+  }
+  if (terminalState.status !== "verified") {
+    omissions.push({
+      field: "terminal/workspace facts",
+      reason: terminalState.reason,
+    });
+  }
+  if (acceptedWork.verifiedMaps < acceptedWork.acceptedMaps) {
+    omissions.push({
+      field: "accepted MAP generations",
+      reason:
+        `${acceptedWork.acceptedMaps - acceptedWork.verifiedMaps} accepted generation(s) could not be revalidated`,
+    });
+  }
+  if (evidenceSelection.scope !== "complete") {
+    omissions.push({
+      field: "Evidence Index anchors",
+      reason:
+        `${originalIndex.anchors.length - publishedIndex.anchors.length} anchor(s) omitted after ${evidenceSelection.verificationFailureCode}`,
+    });
+  }
+  if (manifestDiagnostic) {
+    omissions.push({
+      field: "mutable manifest projection",
+      reason: `omitted after ${manifestDiagnostic}; immutable contract paths remain authoritative`,
+    });
+  }
+
+  const projection = {
+    currentGoal,
+    terminalState,
+    acceptedWork,
+    diagnostics: degradedDiagnosticChain(state),
+    omissions,
+    evidence: {
+      scope: evidenceSelection.scope,
+      retainedAnchors: publishedIndex.anchors.length,
+      totalAnchors: originalIndex.anchors.length,
+      indexDigest: `sha256:${publishedIndex.integrity.indexDigest}`,
+    },
+    adjudication: {
+      runId: state.runId,
+      decisionId: decision.decisionId,
+      eventCount: state.eventChain.eventCount,
+      headDigest: state.eventChain.headDigest,
+    },
+  };
+
+  const maxChars = Number.isSafeInteger(manifest?.maxChars)
+    ? manifest.maxChars
+    : 40_000;
+  let handoff = renderDegradedHandoff(projection);
+  while (handoff.length > maxChars) {
+    const stage = [...projection.acceptedWork.stages]
+      .reverse()
+      .find((entry) => entry.claims.length > 0);
+    if (!stage) break;
+    stage.claims.pop();
+    projection.acceptedWork.omittedClaims += 1;
+    handoff = renderDegradedHandoff(projection);
+  }
+  if (handoff.length > maxChars) {
+    throw new ExportHandoffError(
+      "DEGRADED_OUTPUT_TOO_LARGE",
+      `Rendered Degraded Handoff was ${handoff.length} characters; limit is ${maxChars}`,
+    );
+  }
+
+  const evidenceIndexText = `${JSON.stringify(publishedIndex, null, 2)}\n`;
+  const maxEvidenceIndexChars = Number.isSafeInteger(manifest?.maxEvidenceIndexChars)
+    ? manifest.maxEvidenceIndexChars
+    : 1_000_000;
+  if (evidenceIndexText.length > maxEvidenceIndexChars) {
+    throw new ExportHandoffError(
+      "DEGRADED_EVIDENCE_INDEX_TOO_LARGE",
+      `Degraded Evidence Index was ${evidenceIndexText.length} characters; limit is ${maxEvidenceIndexChars}`,
+    );
+  }
+  await verifyEvidenceIndex(publishedIndex);
+
+  const targets = degradedPublicationTargets(state, contract, resolved);
+  for (const target of [targets.outputPath, targets.evidenceIndexPath]) {
+    if (await pathExists(target)) {
+      throw new ExportHandoffError("OUTPUT_EXISTS", `Refusing to overwrite ${target}`);
+    }
+  }
+  await publishPairTransactionally([
+    { path: targets.outputPath, content: handoff },
+    { path: targets.evidenceIndexPath, content: evidenceIndexText },
+  ]);
+
+  return {
+    effect: "degraded_handoff_published",
+    publicationState: "PUBLISHED",
+    outputPath: targets.outputPath,
+    evidenceIndexPath: targets.evidenceIndexPath,
+    handoffDigest: `sha256:${sha256Text(handoff)}`,
+    evidenceIndexDigest: `sha256:${sha256Text(evidenceIndexText)}`,
+    evidenceScope: evidenceSelection.scope,
+    retainedAnchors: publishedIndex.anchors.length,
+    omittedAnchors: originalIndex.anchors.length - publishedIndex.anchors.length,
+    acceptedMaps: acceptedWork.acceptedMaps,
+    verifiedAcceptedMaps: acceptedWork.verifiedMaps,
+    retainedAcceptedClaims: acceptedWork.stages.reduce(
+      (total, stage) => total + stage.claims.length,
+      0,
+    ),
+    unresolvedDiagnostics: projection.diagnostics.length,
+    cleanupStatus: "kept",
+  };
 }
 
 async function publishHandoffInternal(workDir, options = {}, dependencies = {}) {

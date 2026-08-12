@@ -208,6 +208,21 @@ overwriting output, and false evidence validity.
 normal publication each reach an evidence-verifiable Degraded Handoff. A degraded publication I/O
 failure returns to adjudication unless every lawful target is physically unwritable.
 
+**Implementation evidence**: `task-workflow-core.mjs:publishDegradedHandoff` binds the exact active
+decision, re-verifies the complete Evidence Index or rebuilds an explicit verified subset, retrieves
+the byte-exact current goal, revalidates accepted MAP generations, and never reads a failed REDUCE
+candidate into the projection. `render-degraded-handoff.mjs` renders exact diagnostics, omissions,
+continuation instructions, and the adjudication head deterministically. The existing exclusive
+two-file transaction publishes the pair; its failure rolls back attempt-owned output and the MA3
+application boundary activates one linked successor. Successful application replays as `PUBLISHED`,
+including for pre-MA4 contracts whose immutable lifecycle list did not yet name that terminal state.
+
+**Acceptance evidence**: the original authentic MA4 red failed 0/5 only because
+`publish_degraded` was unimplemented. The completed fixture passes 7/7 across pre-MAP, accepted-MAP,
+REDUCE, normal-publication, source-change subset, mutated-goal rejection, terminal replay/gating,
+and transactional rollback paths. MA0-MA4 pass 57/57; the coexisting complete Node suite passes
+245/245 with zero skips.
+
 ## Slice MA5 — Operator contract and end-to-end guarantee
 
 **Input**: the implemented state machine and retained live overlapping-coverage case.

@@ -5,6 +5,7 @@ import path from "node:path";
 import { canonicalStringify, sha256Text } from "./evidence-addressing.mjs";
 import { createMapDispatch } from "./map-worker.mjs";
 import { ExportHandoffError } from "./source-thread.mjs";
+import { publishDegradedHandoff } from "./task-workflow-core.mjs";
 
 const MANIFEST_FILE = "manifest.json";
 
@@ -481,8 +482,10 @@ export async function executeAdjudicationAction({ workDir, contract, request, de
   if (decision.action.type === "relocate_publication") {
     return relocatePublication(resolved, contract, request, decision);
   }
-  fail(
-    "ADJUDICATION_ACTION_NOT_IMPLEMENTED",
-    "publish_degraded is implemented by Slice MA4, not MA3",
-  );
+  return publishDegradedHandoff({
+    workDir: resolved,
+    contract,
+    request,
+    decision,
+  });
 }

@@ -152,10 +152,14 @@ export const ADJUDICATION_PHASE_POLICIES = Object.freeze({
   }),
 });
 
-const LIFECYCLE_STATES = Object.freeze([
+const LEGACY_LIFECYCLE_STATES = Object.freeze([
   "RUNNING",
   "AWAITING_ADJUDICATION",
   "APPLYING_ADJUDICATION",
+]);
+const LIFECYCLE_STATES = Object.freeze([
+  ...LEGACY_LIFECYCLE_STATES,
+  "PUBLISHED",
 ]);
 
 function fail(code, message, details = undefined) {
@@ -224,6 +228,13 @@ function textDigest(text) {
 }
 
 function publicAdjudicationReference(state) {
+  if (!state.activeRequest) {
+    return {
+      lifecycleState: state.lifecycleState,
+      runId: state.runId,
+      ...(state.publication ? { publication: structuredClone(state.publication) } : {}),
+    };
+  }
   return {
     lifecycleState: state.lifecycleState,
     runId: state.runId,
@@ -247,6 +258,15 @@ export function throwCapturedAdjudication(error, state) {
 }
 
 export function throwActiveAdjudication(state) {
+  if (state.lifecycleState === "PUBLISHED") {
+    throwCapturedAdjudication(
+      {
+        code: "COMPRESSION_RUN_PUBLISHED",
+        message: "Compression Run already published its terminal Handoff pair",
+      },
+      state,
+    );
+  }
   throwCapturedAdjudication(
     {
       code: state.activeRequest.request.diagnostic.code,
@@ -427,7 +447,10 @@ function validateContract(contract, manifest = null) {
     contract.runId !== runIdForBinding(binding) ||
     contract.workflowVersion !== 2 ||
     !manifestMatches ||
-    canonicalStringify(contract.lifecycleStates) !== canonicalStringify(LIFECYCLE_STATES) ||
+    ![
+      canonicalStringify(LIFECYCLE_STATES),
+      canonicalStringify(LEGACY_LIFECYCLE_STATES),
+    ].includes(canonicalStringify(contract.lifecycleStates)) ||
     canonicalStringify(contract.decisionActions) !== canonicalStringify(
       ADJUDICATION_DECISION_ACTIONS,
     )
@@ -990,6 +1013,15 @@ function publicRequestState(entry) {
   };
 }
 
+function isDegradedPublicationRequest(entry) {
+  return (
+    entry.status === "APPLIED" &&
+    entry.decision?.action?.type === "publish_degraded" &&
+    entry.application?.result?.effect === "degraded_handoff_published" &&
+    entry.application.result.publicationState === "PUBLISHED"
+  );
+}
+
 function buildPublicState(context, paths, events, requests, applications = []) {
   const active = requests.find((entry) => [
     "AWAITING_ADJUDICATION",
@@ -1008,11 +1040,28 @@ function buildPublicState(context, paths, events, requests, applications = []) {
   const activeRequest = active
     ? publicRequests.find((entry) => entry.requestId === active.requestId)
     : null;
+  const publishedRequests = publicRequests.filter(isDegradedPublicationRequest);
+  if (publishedRequests.length > 1 || (activeRequest && publishedRequests.length > 0)) {
+    fail(
+      "ADJUDICATION_EVENT_CHAIN_INVALID",
+      "Event replay produced an invalid post-publication Adjudication state",
+    );
+  }
+  const publishedRequest = publishedRequests[0] || null;
+  const publication = publishedRequest ? {
+    requestId: publishedRequest.requestId,
+    decisionId: publishedRequest.decisionId,
+    applicationId: publishedRequest.applicationId,
+    outputPath: publishedRequest.application.result.outputPath,
+    evidenceIndexPath: publishedRequest.application.result.evidenceIndexPath,
+    handoffDigest: publishedRequest.application.result.handoffDigest,
+    evidenceIndexDigest: publishedRequest.application.result.evidenceIndexDigest,
+  } : null;
   return {
     formatVersion: FORMAT_VERSION,
     kind: STATE_KIND,
     runId: context.contract.runId,
-    lifecycleState: active?.status || "RUNNING",
+    lifecycleState: active?.status || (publishedRequest ? "PUBLISHED" : "RUNNING"),
     contract: {
       documentPath: context.contractPath,
       contractDigest: context.contractDigest,
@@ -1023,6 +1072,7 @@ function buildPublicState(context, paths, events, requests, applications = []) {
       headDigest: events.at(-1)?.eventDigest || null,
     },
     activeRequest,
+    publication,
     requests: publicRequests,
     applications: applications.map((entry) => ({
       applicationId: entry.applicationId,
@@ -1087,13 +1137,15 @@ async function replayAdjudication(context) {
           "request_opened must reference exactly one request document",
         );
       }
-      if (requests.some((entry) => [
-        "AWAITING_ADJUDICATION",
-        "APPLYING_ADJUDICATION",
-      ].includes(entry.status))) {
+      if (requests.some((entry) => (
+        [
+          "AWAITING_ADJUDICATION",
+          "APPLYING_ADJUDICATION",
+        ].includes(entry.status) || isDegradedPublicationRequest(entry)
+      ))) {
         fail(
           "ADJUDICATION_EVENT_CHAIN_INVALID",
-          "A new request cannot silently replace an active request",
+          "A new request cannot replace an active or published Compression Run",
         );
       }
       const documentPath = path.join(paths.requests, `${event.documentId}.json`);
@@ -1674,7 +1726,9 @@ async function recordFailedApplication(context, state, error) {
 export async function applyAdjudicationDecision(workDir, executeAction) {
   const context = await loadContractContext(workDir);
   const state = await replayAdjudication(context);
-  if (state.lifecycleState === "RUNNING") return appliedResponse(state, false);
+  if (["RUNNING", "PUBLISHED"].includes(state.lifecycleState)) {
+    return appliedResponse(state, false);
+  }
   if (
     state.lifecycleState !== "APPLYING_ADJUDICATION" ||
     !state.activeRequest?.decision

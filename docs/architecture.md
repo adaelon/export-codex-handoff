@@ -88,7 +88,7 @@ No script starts another Codex process.
 
 The accepted adjudication boundary is specified by
 [ADR-0016](./adr/0016-main-codex-adjudication-loop.md) and its
-[ordered slices](./slice-plan-main-codex-adjudication.md). MA1-MA3 are implemented: each new v2 run has an
+[ordered slices](./slice-plan-main-codex-adjudication.md). MA1-MA4 are implemented: each new v2 run has an
 immutable root `adjudication-contract.json`; bounded request and decision documents are referenced by
 a numbered digest chain; replay is authoritative; and `adjudicate --inspect|--submit|--apply` exposes that
 state without a mutable status file. The managed v2 CLI replays that state before every post-prepare
@@ -97,7 +97,9 @@ core while a request or submitted-but-unapplied decision is active. Library-leve
 remain composable deterministic cores, and v1 runs without a durable adjudication contract keep their
 compatibility route. Application documents close one submitted decision immutably; success restores
 `RUNNING`, while failure closes the predecessor as `APPLICATION_FAILED` and activates exactly one
-linked successor request.
+linked successor request. The `publish_degraded` action is the successful terminal exception: it
+re-verifies retained evidence, publishes a bounded Degraded Handoff plus Evidence Index transactionally,
+and replays as `PUBLISHED` without promoting a failed REDUCE candidate or an unverifiable fact.
 
 ```text
 v2 prepare -> immutable adjudication-contract.json
@@ -106,15 +108,23 @@ adjudicate --inspect -> verify contract + document digests + complete event chai
 adjudicate --submit -> exact run/request/digest/action check -> immutable decision document
                     -> numbered decision_submitted event -> APPLYING_ADJUDICATION
 adjudicate --apply -> retry named phase | regenerate named generation | relocate publication pair
-  success -> immutable APPLIED application + numbered event -> RUNNING + exact resume command
+                  | publish evidence-bounded degraded pair
+  repair success -> immutable APPLIED application + numbered event -> RUNNING + exact resume command
+  degraded success -> immutable APPLIED application + numbered event -> PUBLISHED
   failure -> immutable APPLICATION_FAILED application + linked successor -> AWAITING_ADJUDICATION
   replay after success -> same result and event head; zero writes
+publish_degraded -> verify exact request/decision binding
+                 -> re-verify complete Evidence Index or build explicit verified subset
+                 -> retrieve byte-exact current goal + deterministic terminal state
+                 -> revalidate accepted MAP generations; omit failed REDUCE candidate
+                 -> deterministic degraded renderer + exclusive two-file transaction
 managed v2 CLI command -> replay state
   RUNNING -> invoke deterministic core
     success -> return unchanged command result
     caught diagnostic -> phase/owner/action policy -> bounded library ingress
                       -> non-terminal failure-report projection + exact inspection reference
   AWAITING_ADJUDICATION | APPLYING_ADJUDICATION -> return same request identity; do not invoke core
+  PUBLISHED -> return the stable terminal state; do not invoke core or open a successor
 MAP regeneration -> retain complete prior generation in manifest audit history
                  -> issue generation-specific candidate/receipt paths and one new dispatch
                  -> unrelated MAP generations remain byte-identical; REDUCE reads only active stages
@@ -418,6 +428,6 @@ re-runs an indexed workspace observation and fails closed if its source revision
 - **Provider-observation admission and persistence boundary**: [Provider Timing Capability for Multi-Wave MAP](./adr/0014-provider-timing-capability-for-multi-wave-map.md)
 - **Implemented earliest-owner targeted MAP repair (TR1-TR4)**: [Earliest-Owner Targeted MAP Repair](./adr/0015-earliest-owner-targeted-map-repair.md)
 - **Implemented empty-Progress earliest-owner repair (TR5)**: [Targeted MAP repair slices](./slice-plan-targeted-map-repair.md#slice-tr5--empty-progress-map-ownership)
-- **Implemented Main Codex durable contract, all-stage capture, and decision application (MA1-MA3; MA4-MA5 planned)**: [Main Codex Adjudication Loop](./adr/0016-main-codex-adjudication-loop.md)
+- **Implemented Main Codex durable contract, all-stage capture, decision application, and degraded publication (MA1-MA4; MA5 planned)**: [Main Codex Adjudication Loop](./adr/0016-main-codex-adjudication-loop.md)
 
 - **Implemented version routing and transactional publication**: [Evidence-preserving compression slice plan](./slice-plan-evidence-preserving-compression.md#slice-6-transactional-publication-compatibility-and-end-to-end-evaluation)

@@ -795,3 +795,16 @@
 
 **Entry point**: Submit one bound `retry_stage`, `regenerate_stage`, or `relocate_publication` decision, then run `adjudicate <WORK_DIR> --apply`; execute only the returned named resume command.
 **Test**: Authentic red failed 0/5 because `--apply` was absent. MA3 passes 23/23; MA0-MA3 pass 50/50; the coexisting complete Node suite passes 238/238 with zero skips; syntax checks and `git diff --check` pass.
+
+## 2026-08-12 Slice MA4 evidence-bounded degraded publication
+
+**Touched**:
+- `skills/export-codex-handoff/scripts/lib/adjudication-actions.mjs:executeAdjudicationAction` — dispatches only the exact active `publish_degraded` decision to the degraded publisher.
+- `skills/export-codex-handoff/scripts/lib/adjudication.mjs:replayAdjudication / throwActiveAdjudication` — derives the immutable `PUBLISHED` terminal state and gates later ordinary commands without opening a successor.
+- `skills/export-codex-handoff/scripts/lib/task-workflow-core.mjs:publishDegradedHandoff` — re-verifies evidence, projects only verified current/terminal/MAP facts, omits failed REDUCE state, and transactionally publishes the Handoff/Index pair.
+- `skills/export-codex-handoff/scripts/lib/render-degraded-handoff.mjs:renderDegradedHandoff` — renders exact diagnostics, omissions, retained work, continuation instructions, and adjudication binding deterministically.
+- `skills/export-codex-handoff/tests/main-codex-adjudication-ma4.test.mjs:MA4 publication matrix` — covers pre-MAP, accepted-MAP, REDUCE, oversized normal publication, source change, mutated goal, terminal replay, and rollback/successor behavior.
+- `docs/slice-plan-main-codex-adjudication.md:Slice MA4` and `docs/architecture.md:adjudication flow / Decision index` — record the implemented boundary while leaving operator-contract/live acceptance work to MA5.
+
+**Entry point**: Submit one exact active `publish_degraded` decision, then run `adjudicate <WORK_DIR> --apply`; consume the published degraded pair or repair the single linked successor after transactional failure.
+**Test**: MA4 passes 7/7; the coexisting complete Node suite passes 245/245 with zero skips; failed pair publication leaves no attempt-owned output and activates exactly one linked successor.
