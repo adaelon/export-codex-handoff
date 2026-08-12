@@ -300,6 +300,7 @@ Source Thread UUID
   -> non-consuming structure/output check -> immutable candidate digest
        -> [continuation v2] collect MAP-owned candidate issues before receipt acceptance
             -> non-Critical exclusions + low-value/misclassified Findings
+            -> missing Progress MAP action-ready author, including empty Progress Evidence
             -> evidence-free MAP_REPAIR_REQUIRED { repairScope, segmentId, issues[] }
                  -> --check: repair only the same private candidate and reuse the dispatch
                  -> --complete: retain the failed receipt/candidate and create only segment attempt-2
@@ -381,5 +382,6 @@ re-runs an indexed workspace observation and fails closed if its source revision
 - **Action-ready Hot/Cold boundary and staged v2 route**: [Action-Ready Handoff Hot/Cold Boundary](./adr/0013-action-ready-handoff-hot-cold-boundary.md)
 - **Provider-observation admission and persistence boundary**: [Provider Timing Capability for Multi-Wave MAP](./adr/0014-provider-timing-capability-for-multi-wave-map.md)
 - **Implemented earliest-owner targeted MAP repair (TR1-TR4)**: [Earliest-Owner Targeted MAP Repair](./adr/0015-earliest-owner-targeted-map-repair.md)
+- **Implemented empty-Progress earliest-owner repair (TR5)**: [Targeted MAP repair slices](./slice-plan-targeted-map-repair.md#slice-tr5--empty-progress-map-ownership)
 
 - **Implemented version routing and transactional publication**: [Evidence-preserving compression slice plan](./slice-plan-evidence-preserving-compression.md#slice-6-transactional-publication-compatibility-and-end-to-end-evaluation)

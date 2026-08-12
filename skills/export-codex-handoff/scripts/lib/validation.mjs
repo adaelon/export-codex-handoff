@@ -1174,6 +1174,7 @@ function actionReadyCandidateRepairIssues(
   dictionary,
   expectedFrame,
   claimsByLocalId,
+  progress = null,
 ) {
   const issues = [];
   const criticalAnchors = new Set(
@@ -1235,6 +1236,22 @@ function actionReadyCandidateRepairIssues(
       });
     }
   }
+  if (
+    progress !== null &&
+    result.findings.length === 0 &&
+    result.deliverables.length === 0 &&
+    result.inspectionDispositions.length === 0
+  ) {
+    issues.push({
+      code: "MISSING_ACTION_READY_RELATIONS",
+      fieldPath: "deliverables",
+      message: "Progress Evidence MAP must author action-ready relations before REDUCE",
+      correctionHint: [
+        "Add at least one deliverable. When Progress Evidence cannot support a Finding,",
+        "use status blocked, findingIds [], and a non-empty missingReason; do not invent evidence.",
+      ].join(" "),
+    });
+  }
   return issues;
 }
 
@@ -1243,12 +1260,14 @@ function requireNoActionReadyCandidateRepair(
   dictionary,
   expectedFrame,
   claimsByLocalId,
+  progress = null,
 ) {
   const issues = actionReadyCandidateRepairIssues(
     result,
     dictionary,
     expectedFrame,
     claimsByLocalId,
+    progress,
   );
   if (issues.length === 0) return;
   throw new ExportHandoffError(
@@ -1510,6 +1529,7 @@ function validateActionReadyContinuationCandidate(
     dictionary,
     expectedFrame,
     claimsByLocalId,
+    progress,
   );
   return { result, claimsByLocalId, findingsByLocalId, progress };
 }

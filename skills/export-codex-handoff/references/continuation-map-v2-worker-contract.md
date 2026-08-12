@@ -46,8 +46,11 @@ evidence indexes. Every Finding must be reachable from at least one deliverable.
 
 Only the dispatch whose private chunk has `stage: progress_map` may author non-empty `findings`,
 `deliverables`, or `inspectionDispositions`. Its bounded `progressEvidence` contains the complete
-selected inspection set. Copy each inspection's `outputEvidence.referenceId` as `inspectionId` and
-dispose every inspection exactly once:
+selected inspection set. The Progress MAP must author at least one action-ready relation. When its
+Progress Evidence supports no Finding, write one `blocked` deliverable with empty `findingIds` and a
+concrete `missingReason`; never invent a Claim or Finding merely to make the arrays non-empty. Copy
+each inspection's `outputEvidence.referenceId` as `inspectionId` and dispose every inspection exactly
+once:
 
 - `do_not_reread` or `verify_only` requires at least one Finding whose Claim cites that inspection's
   output evidence;

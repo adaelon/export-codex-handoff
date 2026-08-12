@@ -99,3 +99,29 @@ receipt's exact bytes before and after repair. No production runtime file change
 **Acceptance evidence**: TR4 passes 2/2; TR1-TR4 plus MAP Worker and Action-ready regressions pass
 37/37; Skill, Markdown-link, and compatibility regressions pass 15/15; the complete Node suite passes
 186/186 with zero skips, and `git diff --check` passes.
+
+## Slice TR5 — Empty Progress MAP ownership
+
+**Input**: a `continuation-map-v2` Progress MAP whose source ended before any assistant progress,
+content inspection, or successful Tool Receipt was recorded.
+
+**Produces**: `validate-map --check` reports one bounded `MISSING_ACTION_READY_RELATIONS` issue
+before receipt acceptance. Its correction names `deliverables` and permits one evidence-free
+`blocked` deliverable with empty `findingIds` and a concrete `missingReason`; it never permits an
+invented Claim or Finding.
+
+**Done when**: the repaired same-attempt candidate completes and `prepare-reduce` produces an empty
+Finding table plus the blocked deliverable, while every pre-existing targeted-repair and normal
+action-ready path remains green.
+
+**Implementation evidence**: `validation.mjs:actionReadyCandidateRepairIssues` now identifies an
+otherwise-empty Progress MAP as the earliest owner of the missing downstream author. The Skill and
+v2 Worker contract require every Progress MAP to author an action-ready relation and define the
+blocked-deliverable fallback for genuinely empty Progress Evidence.
+
+**Acceptance evidence**: the authentic TR5 red failed because `validate-map --check` accepted the
+empty candidate. TR5 then passes 1/1 and proves the repaired candidate reaches `prepare-reduce`
+without a Finding. TR1-TR5, MAP Worker, and Action-ready AH2 regressions pass 18/18; the complete
+Node suite passes 187/187 with zero skips. Repository-to-installed package acceptance passes 10/10.
+A fresh single-wave live run publishes both v2 artifacts with no contract-shape retry, passes
+`verify-evidence` with 5/5 anchors, and completes in 432,420 ms.

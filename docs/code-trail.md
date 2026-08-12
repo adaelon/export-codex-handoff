@@ -726,3 +726,15 @@
 
 **Entry point**: Run the TR4 test against a continuation-map-v2 progress candidate containing all retained failure classes; use only its ordered `details.issues[]` to repair the responsible candidate.
 **Test**: TR4 passes 2/2; TR1-TR4 plus MAP Worker and Action-ready regressions pass 37/37; Skill/Markdown/compatibility regressions pass 15/15; the complete Node suite passes 186/186 with zero skips; `git diff --check` passes.
+
+## 2026-08-12 Slice TR5 empty Progress MAP ownership
+
+**Touched**:
+- `skills/export-codex-handoff/scripts/lib/validation.mjs:actionReadyCandidateRepairIssues` — reports an otherwise-empty Progress MAP as `MISSING_ACTION_READY_RELATIONS` before receipt acceptance.
+- `skills/export-codex-handoff/references/continuation-map-v2-worker-contract.md:Output shape` — requires one action-ready relation and defines a blocked deliverable with no invented Finding for empty Progress Evidence.
+- `skills/export-codex-handoff/SKILL.md:Workflow step 4` — carries the same coordinator-visible Progress MAP fallback into the packaged operator contract.
+- `skills/export-codex-handoff/tests/targeted-map-repair-tr5.test.mjs:TR5 empty-progress acceptance` — reproduces the live failure, repairs the same candidate, and proves `prepare-reduce` receives an empty Finding table plus the blocked deliverable.
+- `docs/slice-plan-targeted-map-repair.md:Slice TR5` and `docs/architecture.md:MAP dispatch flow / Decision index` — record the earliest-owner extension.
+
+**Entry point**: Run `validate-map --check` on every Progress MAP even when its Progress Evidence is empty; apply the returned `deliverables` repair without inventing evidence and reuse the same dispatch.
+**Test**: Authentic red accepted the empty candidate; TR5 passes 1/1 after the fix. TR1-TR5, MAP Worker, and Action-ready AH2 regressions pass 18/18; the complete suite passes 187/187 with zero skips; installed-package acceptance passes 10/10. Fresh live publication completes in 432,420 ms with 3/3 first-attempt MAP receipts, no contract-shape retry, and `verify-evidence` valid for 5/5 anchors.

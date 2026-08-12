@@ -108,9 +108,11 @@ Resolve `<skill-dir>` to this skill folder. Run helper commands yourself; do not
    - A continuation Worker writes every Claim once with dictionary-local positive evidence indexes,
      local numeric Claim IDs, typed relations, and explicit exclusions only for unrepresented Critical
      Anchors. A v2 `progress_map` Worker additionally binds Findings to requested deliverables and
-     disposes every selected content inspection exactly once; non-progress v2 Workers keep those
-     arrays empty. It must not emit global Claim/Finding IDs, Evidence Anchor strings, full coverage
-     ranges, or REDUCE fields. Its exact candidate file must not exceed the dispatch
+     disposes every selected content inspection exactly once. It must author at least one
+     action-ready relation; when Progress Evidence supports no Finding, it writes one `blocked`
+     deliverable with empty `findingIds` and a concrete `missingReason` instead of inventing evidence.
+     Non-progress v2 Workers keep those arrays empty. It must not emit global Claim/Finding IDs,
+     Evidence Anchor strings, full coverage ranges, or REDUCE fields. Its exact candidate file must not exceed the dispatch
      `maxMapOutputChars`; v2 deterministic completion must not exceed 16,000 characters.
    - Before completion, run the non-consuming structural and output-budget check:
 
