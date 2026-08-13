@@ -357,7 +357,7 @@ Source Thread UUID
   -> worker reads private chunk -> writes mode-specific private MAP candidate
   -> non-consuming structure/output check -> immutable candidate digest
        -> [continuation v2] collect MAP-owned candidate issues before receipt acceptance
-            -> non-Critical exclusions + low-value/misclassified Findings
+            -> non-Critical or deterministic-authority exclusions + low-value/misclassified Findings
             -> missing Progress MAP action-ready author, including empty Progress Evidence
             -> evidence-free MAP_REPAIR_REQUIRED { repairScope, segmentId, issues[] }
                  -> --check: repair only the same private candidate and reuse the dispatch

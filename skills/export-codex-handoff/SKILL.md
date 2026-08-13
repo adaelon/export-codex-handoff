@@ -179,7 +179,9 @@ Resolve `<skill-dir>` to this skill folder. Run helper commands yourself; do not
 
    - A continuation Worker writes every Claim once with dictionary-local positive evidence indexes,
      local numeric Claim IDs, typed relations, and explicit exclusions only for unrepresented Critical
-     Anchors. A v2 `progress_map` Worker additionally binds Findings to requested deliverables and
+     Anchors that are not already retained by the frozen Current Goal, explicit exclusions, Accepted
+     Proposal, or Terminal-State Claim.
+     A v2 `progress_map` Worker additionally binds Findings to requested deliverables and
      disposes every selected content inspection exactly once. It must author at least one
      action-ready relation; when Progress Evidence supports no Finding, it writes one `blocked`
      deliverable with empty `findingIds` and a concrete `missingReason` instead of inventing evidence.

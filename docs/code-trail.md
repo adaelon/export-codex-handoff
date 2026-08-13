@@ -739,6 +739,17 @@
 **Entry point**: Run `validate-map --check` on every Progress MAP even when its Progress Evidence is empty; apply the returned `deliverables` repair without inventing evidence and reuse the same dispatch.
 **Test**: Authentic red accepted the empty candidate; TR5 passes 1/1 after the fix. TR1-TR5, MAP Worker, and Action-ready AH2 regressions pass 18/18; the complete suite passes 187/187 with zero skips; installed-package acceptance passes 10/10. Fresh live publication completes in 432,420 ms with 3/3 first-attempt MAP receipts, no contract-shape retry, and `verify-evidence` valid for 5/5 anchors.
 
+## 2026-08-12 Slice TR6 deterministic authority exclusion ownership
+
+**Touched**:
+- `skills/export-codex-handoff/scripts/lib/validation.mjs:actionReadyCandidateRepairIssues` — rejects a local Critical exclusion that overlaps a frozen Frame authority before receipt acceptance.
+- `skills/export-codex-handoff/tests/targeted-map-repair-tr6.test.mjs:TR6 authority-exclusion acceptance` — reproduces the late `OVERLAPPING_CONTINUATION_COVERAGE` class, repairs the same candidate, and proves the frozen terminal authority reaches REDUCE.
+- `skills/export-codex-handoff/SKILL.md:Workflow step 4` and `references/continuation-map-v2-worker-contract.md:Output shape` — forbid deterministic-authority exclusions in the operator and Worker contracts.
+- `docs/slice-plan-targeted-map-repair.md:Slice TR6` and `docs/architecture.md:MAP dispatch flow` — record the new earliest-owner boundary while retaining REDUCE as a fail-closed backstop.
+
+**Entry point**: Run `validate-map --check` before completion; remove only the named `criticalExclusions[*]` entry when it returns `DETERMINISTIC_AUTHORITY_EXCLUSION`.
+**Test**: Authentic red accepted the conflicting candidate; TR6 passes 1/1 after the fix. TR1-TR6, MAP Worker, and Action-ready AH2 regressions pass 19/19; the complete suite passes 188/188 with zero skips.
+
 ## 2026-08-12 Main Codex adjudication decision and slices
 
 **Touched**:

@@ -125,3 +125,26 @@ without a Finding. TR1-TR5, MAP Worker, and Action-ready AH2 regressions pass 18
 Node suite passes 187/187 with zero skips. Repository-to-installed package acceptance passes 10/10.
 A fresh single-wave live run publishes both v2 artifacts with no contract-shape retry, passes
 `verify-evidence` with 5/5 anchors, and completes in 432,420 ms.
+
+## Slice TR6 — Deterministic authority exclusion ownership
+
+**Input**: a `continuation-map-v2` candidate that explicitly excludes a Critical Anchor already
+retained by the frozen Current Goal, explicit exclusions, Accepted Proposal, or Terminal-State
+Claim.
+
+**Produces**: `validate-map --check` reports one bounded
+`DETERMINISTIC_AUTHORITY_EXCLUSION` issue naming only the responsible
+`criticalExclusions[*].evidenceIndex`; its correction removes that exclusion without exposing the
+Anchor ID or rewriting a deterministic Claim.
+
+**Done when**: same-attempt repair completes, `prepare-reduce` inserts the exact frozen authority
+without retained/excluded overlap, and all earlier targeted-repair paths remain green.
+
+**Implementation evidence**: `validation.mjs:actionReadyCandidateRepairIssues` resolves each local
+exclusion reference and compares it with the frozen Frame-authority anchors. The final REDUCE
+coverage check remains as a fail-closed cross-segment backstop.
+
+**Acceptance evidence**: the authentic TR6 red failed because `validate-map --check` accepted the
+authority-overlapping exclusion. TR6 then passes 1/1 and reaches `prepare-reduce` after same-attempt
+repair. TR1-TR6, MAP Worker, and Action-ready AH2 regressions pass 19/19; the complete Node suite
+passes 188/188 with zero skips.

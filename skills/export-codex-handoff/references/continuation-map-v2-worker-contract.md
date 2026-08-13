@@ -60,9 +60,11 @@ once:
   inspection dispositions because they are absent from Progress Evidence inspections.
 
 Non-progress dispatches write empty action-ready arrays while retaining or explicitly excluding
-their Critical Anchors through the unchanged continuation Claim contract. Do not emit global Claim
-IDs, Finding IDs, Evidence Anchor strings, REDUCE fields, raw Progress Evidence outside its private
-chunk, or prose outside the JSON object.
+their Critical Anchors through the unchanged continuation Claim contract. Never explicitly exclude
+an Anchor already retained by the frozen Current Goal, explicit exclusions, Accepted Proposal, or
+Terminal-State Claim; deterministic completion preserves those Frame authorities. Do not emit
+global Claim IDs, Finding IDs, Evidence Anchor strings, REDUCE fields, raw Progress Evidence outside
+its private chunk, or prose outside the JSON object.
 
 ## Coordinator handback and adjudication
 

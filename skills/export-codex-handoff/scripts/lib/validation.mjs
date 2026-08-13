@@ -1180,6 +1180,14 @@ function actionReadyCandidateRepairIssues(
   const criticalAnchors = new Set(
     expectedFrame?.frame?.preservationPolicy?.requiredAnchors || [],
   );
+  const deterministicAuthorityAnchors = new Set([
+    ...(expectedFrame?.frame?.currentGoal?.anchors || []),
+    ...(expectedFrame?.frame?.explicitExclusions || []).flatMap(
+      (claim) => claim?.anchors || [],
+    ),
+    ...(expectedFrame?.frame?.acceptedProposal?.anchors || []),
+    ...(expectedFrame?.frame?.terminalStateClaim?.anchors || []),
+  ]);
   for (const [index, exclusion] of result.criticalExclusions.entries()) {
     const anchorId = resolveEvidenceReferences(dictionary, [exclusion.evidenceIndex])[0];
     if (!criticalAnchors.has(anchorId)) {
@@ -1189,6 +1197,15 @@ function actionReadyCandidateRepairIssues(
         message: "criticalExclusions may contain only Critical Anchor references",
         correctionHint:
           "Remove this entry; non-Critical evidence remains retrievable without an explicit exclusion.",
+      });
+    } else if (deterministicAuthorityAnchors.has(anchorId)) {
+      issues.push({
+        code: "DETERMINISTIC_AUTHORITY_EXCLUSION",
+        fieldPath: `criticalExclusions[${index}].evidenceIndex`,
+        message:
+          "criticalExclusions cannot exclude an Anchor retained by a frozen Frame authority",
+        correctionHint:
+          "Remove this entry; the frozen Current Goal, explicit exclusion, Accepted Proposal, or Terminal-State Claim retains this Critical Anchor deterministically.",
       });
     }
   }
