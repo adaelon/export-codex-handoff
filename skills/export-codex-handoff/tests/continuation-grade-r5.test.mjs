@@ -23,6 +23,7 @@ import {
   prepareFrameStage,
   prepareReduceStage,
   publishHandoff,
+  scheduleNextMapWave,
   validateFrameStage,
 } from "../scripts/lib/task-workflow.mjs";
 import { REDUCE_DEFAULT_CATEGORIES } from "./fixtures/continuation-grade-fixtures.mjs";
@@ -129,6 +130,7 @@ async function preparedAcceptedWorkflow(root, options = {}) {
     anchors: frameInput.requiredFrameAnchors,
   });
   const validated = await validateFrameStage(prepared.workDir);
+  await scheduleNextMapWave(prepared.workDir, validated.mapDispatches.length);
   const dispatch = validated.mapDispatches[0];
   const dictionary = JSON.parse(await fs.promises.readFile(dispatch.dictionaryPath, "utf8"));
   const evidenceIndex = dictionary.evidenceReferences.find(

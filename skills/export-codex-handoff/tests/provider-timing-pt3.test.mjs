@@ -25,6 +25,7 @@ import {
   prepareCompressionTask,
   prepareFrameStage,
   recordMapGenerationMetric,
+  scheduleNextMapWave,
   validateFrameStage,
 } from "../scripts/lib/task-workflow.mjs";
 import {
@@ -156,7 +157,13 @@ async function prepareCompletedMap(root, { accept = true, checkObservation = fal
   });
   const validated = await validateFrameStage(prepared.workDir);
   assert.equal(validated.mapDispatches.length, 1);
-  const dispatch = validated.mapDispatches[0];
+  const scheduled = await scheduleNextMapWave(
+    prepared.workDir,
+    PROVIDER_TIMING_PT3_FIXTURE.observation.availableSlots,
+  );
+  assert.equal(scheduled.wave, 1);
+  assert.deepEqual(scheduled.dispatches, validated.mapDispatches);
+  const dispatch = scheduled.dispatches[0];
   const observation = createMapGenerationObservation(dispatch);
   await claimMapDispatch(
     prepared.workDir,
@@ -427,11 +434,11 @@ test("PT3 fails closed for unaccepted receipts, correlation mismatches, and conf
       ],
       [
         { ...prepared.observation, wave: 2 },
-        PROVIDER_TIMING_PT3_FIXTURE.diagnostics.conflictingReplay,
+        PROVIDER_TIMING_PT3_FIXTURE.diagnostics.correlationMismatch,
       ],
       [
         { ...prepared.observation, availableSlots: 2 },
-        PROVIDER_TIMING_PT3_FIXTURE.diagnostics.conflictingReplay,
+        PROVIDER_TIMING_PT3_FIXTURE.diagnostics.correlationMismatch,
       ],
     ];
     for (const [observation, code] of cases) {

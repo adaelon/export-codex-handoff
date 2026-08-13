@@ -25,6 +25,7 @@ import {
   prepareFrameStage,
   prepareReduceStage,
   publishHandoff,
+  scheduleNextMapWave,
   validateFrameStage,
 } from "../scripts/lib/task-workflow.mjs";
 import {
@@ -177,6 +178,7 @@ async function prepareActionReadyPublication(root) {
   };
   await writeJson(frameStage.framePath, frame);
   const validated = await validateFrameStage(prepared.workDir);
+  await scheduleNextMapWave(prepared.workDir, validated.mapDispatches.length);
 
   for (const dispatch of validated.mapDispatches) {
     const segment = validated.segments.find((item) => item.segmentId === dispatch.segmentId);

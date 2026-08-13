@@ -42,13 +42,14 @@ test("R7 continuation-map-v1 remains a frozen compatibility route after v2 promo
   );
 });
 
-test("R7 Skill requires deterministic R6 calibration and fail-fast handling", () => {
+test("R7 Skill requires deterministic R6 calibration and deadline-governed waves", () => {
   const skill = readSkillFile("SKILL.md");
 
   assert.match(skill, /projectFirstWaveBudget/);
   assert.match(skill, /provider[^\n]*latency/i);
   assert.match(skill, /fresh[^\n]*slot/i);
-  assert.match(skill, /LIVE_BUDGET_UNREACHABLE/);
+  assert.match(skill, /workflow deadline/);
+  assert.match(skill, /over[ -]target[\s\S]{0,100}advisory/i);
   assert.match(skill, /performanceMetrics/);
   assert.match(skill, /phaseTimingsMs\.total <= 600000/);
 });

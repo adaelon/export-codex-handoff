@@ -17,6 +17,7 @@ import {
   prepareFrameStage,
   prepareReduceStage,
   publishHandoff,
+  scheduleNextMapWave,
   validateFrameStage,
 } from "../scripts/lib/task-workflow.mjs";
 import {
@@ -77,6 +78,7 @@ async function prepareAcceptedTerminalWorkflow(root) {
   };
   await writeJson(frameStage.framePath, frame);
   const validated = await validateFrameStage(prepared.workDir);
+  await scheduleNextMapWave(prepared.workDir, validated.mapDispatches.length);
 
   for (const dispatch of validated.mapDispatches) {
     const projection = JSON.parse(await fs.promises.readFile(dispatch.contextPath, "utf8"));

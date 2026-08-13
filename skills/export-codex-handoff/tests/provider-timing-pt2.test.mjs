@@ -73,7 +73,7 @@ test("PT2 observes zero fresh slots before timing capability", () => {
   });
 });
 
-test("PT2 requires timing capability only for a structurally later wave", () => {
+test("PT2 validates optional timing capability without using it for admission", () => {
   const dispatches = providerTimingDispatches();
   const { freshSlots } = PROVIDER_TIMING_PT2_FIXTURE;
 
@@ -91,10 +91,9 @@ test("PT2 requires timing capability only for a structurally later wave", () => 
         PROVIDER_TIMING_PT2_FIXTURE.unavailableProviderTimingCapability,
     }),
     {
-      status: "needs-user",
-      diagnosticCode:
-        PROVIDER_TIMING_PT2_FIXTURE.diagnostics.unavailableCapability,
-      dispatches: [],
+      status: "ready",
+      availableSlots: freshSlots,
+      dispatches: dispatches.slice(0, freshSlots),
     },
   );
   assert.deepEqual(

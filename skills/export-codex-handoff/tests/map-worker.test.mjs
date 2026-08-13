@@ -19,6 +19,7 @@ import {
   prepareCompressionTask,
   prepareFrameStage,
   prepareReduceStage,
+  scheduleNextMapWave,
   validateFrameStage,
 } from "../scripts/lib/task-workflow.mjs";
 import {
@@ -134,6 +135,7 @@ async function prepare(root, { legacy = false } = {}) {
     anchors: frameInput.requiredFrameAnchors,
   });
   const binding = await validateFrameStage(prepared.workDir);
+  await scheduleNextMapWave(prepared.workDir, binding.mapDispatches.length);
   assert.equal(binding.mapDispatches.length, 1);
   return { ...prepared, ...binding, dispatch: binding.mapDispatches[0] };
 }

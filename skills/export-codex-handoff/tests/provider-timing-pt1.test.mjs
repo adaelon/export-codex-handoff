@@ -10,6 +10,7 @@ import {
 } from "../scripts/lib/evidence-addressing.mjs";
 import { buildEvidenceIndex } from "../scripts/lib/evidence-index.mjs";
 import {
+  LIVE_ACCEPTANCE_TARGET_MS,
   PRE_DISPATCH_PUBLICATION_RESERVE_MS,
   PRE_DISPATCH_REDUCE_RESERVE_MS,
   projectPreDispatchLowerBound,
@@ -18,6 +19,7 @@ import {
   claimMapDispatch,
   prepareCompressionTask,
   prepareFrameStage,
+  scheduleNextMapWave,
   validateFrameStage,
 } from "../scripts/lib/task-workflow.mjs";
 import {
@@ -121,8 +123,16 @@ async function prepareFrameCandidate(root, timing) {
   });
   const manifest = JSON.parse(await fs.promises.readFile(prepared.manifestPath, "utf8"));
   manifest.createdAt = timing.createdAt;
+  manifest.workflowDeadlineAt = new Date(
+    Date.parse(timing.createdAt) + LIVE_ACCEPTANCE_TARGET_MS,
+  ).toISOString();
   manifest.frameValidatedAt = timing.frameValidatedAt;
   await writeJson(prepared.manifestPath, manifest);
+  const bindingPath = path.join(prepared.workDir, "workflow-version.json");
+  const binding = JSON.parse(await fs.promises.readFile(bindingPath, "utf8"));
+  binding.createdAt = manifest.createdAt;
+  binding.workflowDeadlineAt = manifest.workflowDeadlineAt;
+  await writeJson(bindingPath, binding);
   return prepared;
 }
 
@@ -231,14 +241,19 @@ test("PT1 rejects an unreachable budget after Frame validation with zero MAP cla
   }
 });
 
-test("PT1 preserves Frame validation and claiming when the lower bound is within budget", async () => {
+test("PT1 preserves Frame validation and claiming when the lower bound is within budget", async (t) => {
   const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "provider-timing-pt1-within-"));
   try {
+    t.mock.timers.enable({
+      apis: ["Date"],
+      now: Date.parse(PROVIDER_TIMING_PT1_FIXTURE.withinBudget.frameValidatedAt),
+    });
     const prepared = await prepareFrameCandidate(
       root,
       PROVIDER_TIMING_PT1_FIXTURE.withinBudget,
     );
     const validated = await validateFrameStage(prepared.workDir);
+    await scheduleNextMapWave(prepared.workDir, validated.mapDispatches.length);
 
     assert.ok(validated.mapDispatches.length > 0);
     assert.deepEqual(await claimFiles(prepared.workDir), []);

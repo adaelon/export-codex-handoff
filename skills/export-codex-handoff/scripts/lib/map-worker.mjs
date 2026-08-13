@@ -324,17 +324,8 @@ export function scheduleMapDispatches(dispatches, availableSlots, options = {}) 
       dispatches: [],
     };
   }
-  if (dispatches.length > availableSlots && !options.firstWave) {
-    const capability = validateProviderTimingCapability(
-      options.providerTimingCapability,
-    );
-    if (!capability.available) {
-      return {
-        status: "needs-user",
-        diagnosticCode: "PROVIDER_TIMING_UNAVAILABLE",
-        dispatches: [],
-      };
-    }
+  if (options.providerTimingCapability !== undefined) {
+    validateProviderTimingCapability(options.providerTimingCapability);
   }
   let projection = null;
   if (options.firstWave) {
@@ -342,14 +333,6 @@ export function scheduleMapDispatches(dispatches, availableSlots, options = {}) 
       ...options.firstWave,
       availableSlots,
     });
-    if (projection.abort) {
-      return {
-        status: "aborted",
-        diagnosticCode: "LIVE_BUDGET_UNREACHABLE",
-        dispatches: [],
-        projection,
-      };
-    }
   }
   return {
     status: "ready",

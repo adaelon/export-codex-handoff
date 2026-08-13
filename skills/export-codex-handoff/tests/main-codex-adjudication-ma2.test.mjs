@@ -22,6 +22,7 @@ import {
   prepareFrameStage,
   prepareReduceStage,
   submitAdjudicationDecision,
+  scheduleNextMapWave,
   validateFrameStage,
 } from "../scripts/lib/task-workflow.mjs";
 
@@ -193,8 +194,14 @@ const PHASE_CASES = [
         "utf8",
       ));
       manifest.createdAt = "2026-08-12T00:00:00.000Z";
+      manifest.workflowDeadlineAt = "2026-08-12T00:10:00.000Z";
       manifest.frameValidatedAt = "2026-08-12T00:10:01.000Z";
       await writeJson(prepared.manifestPath, manifest);
+      const bindingPath = path.join(prepared.workDir, "workflow-version.json");
+      const binding = JSON.parse(await fs.promises.readFile(bindingPath, "utf8"));
+      binding.createdAt = manifest.createdAt;
+      binding.workflowDeadlineAt = manifest.workflowDeadlineAt;
+      await writeJson(bindingPath, binding);
     },
     args: (prepared) => ["validate-frame", prepared.workDir],
   },
@@ -283,7 +290,7 @@ const PHASE_CASES = [
   {
     name: "schedule-map",
     phase: "schedule-map",
-    code: "INCOMPLETE_FIRST_WAVE_METRICS",
+    code: "MAP_DISPATCH_MISSING",
     actions: SCHEDULE_ACTIONS,
     args: (prepared) => ["schedule-map", prepared.workDir, "0"],
   },
@@ -418,6 +425,7 @@ test("MA2 retains accepted MAP artifacts when a later phase enters adjudication"
       anchors: frameInput.requiredFrameAnchors,
     });
     const validated = await validateFrameStage(prepared.workDir);
+    await scheduleNextMapWave(prepared.workDir, validated.mapDispatches.length);
     const dispatch = validated.mapDispatches[0];
     const anchorId = evidencePack().turns[0].userMessages[0].anchors[0];
     const claimId = "ma2-retained-map-claim";

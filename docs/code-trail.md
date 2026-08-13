@@ -833,3 +833,15 @@
 
 **Entry point**: Inspect the exact active request, submit one evidence-bounded allowed action, apply it, and run only `result.resume.command`; select `publish_degraded` when correction is unproven or repeats without new evidence.
 **Test**: MA5 plus retained TR3 contracts pass 9/9; the isolated MA5 Git-index snapshot passes 250/250 and the TR6-coexisting worktree passes 251/251, both with zero skips. Repository and installed packages match at 87/87 files with digest `sha256:01f4634e79612ac446ffac73f72d2c65c0195a4062b1c331dc410cbd952e3d8f`. Fresh installed-Skill acceptance reaches same-run `PUBLISHED` through `MAP_WORKER_UNAVAILABLE -> publish_degraded`, and `verify-evidence` validates 1/1 retained anchor.
+
+## 2026-08-13 Slice deadline-governed claim admission closure
+
+**Touched**:
+- `skills/export-codex-handoff/scripts/lib/task-workflow-core.mjs:prepareCompressionTask / assertWorkflowVersionBinding / requireWorkflowDeadline` — freezes the workflow deadline at `createdAt + 600000ms` in both manifest and immutable binding.
+- `skills/export-codex-handoff/scripts/lib/task-workflow-core.mjs:currentUnacceptedMapAdmission / claimMapDispatch / validateMapStage` — makes the durable admission ledger mandatory for public and compatibility claim paths, including adjudication-regenerated earlier waves.
+- `skills/export-codex-handoff/tests/map-wave-scheduling.test.mjs:workflow deadline is frozen from the synthesized creation clock` — proves the deadline cannot drift with later coordinator time.
+- `skills/export-codex-handoff/tests/targeted-map-repair-tr2.test.mjs:TR2 claim rejects a dispatch outside the current durable MAP wave` — locks the former unrelated-dispatch bypass closed.
+- `skills/export-codex-handoff/SKILL.md:Workflow step 4` and `references/contracts.md:MAP Worker lifecycle` — require every Worker claim to belong to the unique current unaccepted durable admission.
+
+**Entry point**: Run `schedule-map <WORK_DIR> <AVAILABLE_SLOTS>`, then claim only a dispatch returned by that admission; compatibility `validateMapStage` routes serially through the same scheduler.
+**Test**: Claim/deadline/TR2/TR6 focused tests pass 8/8; the complete suite passes 256/256 with zero skips; installed-Skill parity acceptance passes 15/15 across 88 byte-identical files; `git diff --check` passes.

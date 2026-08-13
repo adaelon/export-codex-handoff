@@ -27,6 +27,7 @@ import {
   prepareCompressionTask,
   prepareFrameStage,
   prepareReduceStage,
+  scheduleNextMapWave,
   validateFrameStage,
 } from "../scripts/lib/task-workflow.mjs";
 import {
@@ -223,6 +224,7 @@ async function prepareActionReadyWorkflow(root, pack) {
     anchors: frameInput.requiredFrameAnchors,
   });
   const validated = await validateFrameStage(prepared.workDir);
+  await scheduleNextMapWave(prepared.workDir, validated.mapDispatches.length);
   return { prepared, validated };
 }
 

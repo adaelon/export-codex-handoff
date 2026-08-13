@@ -117,7 +117,7 @@ test("R6 comparator changes one model, reasoning, or slot factor and rejects har
   );
 });
 
-test("R6 first-wave projection aborts later dispatches above the 600000ms live budget", () => {
+test("R6 first-wave projection reports over-budget without controlling admission", () => {
   const firstWave = {
     totalDispatches: 6,
     completedDispatches: 3,
@@ -143,10 +143,10 @@ test("R6 first-wave projection aborts later dispatches above the 600000ms live b
     3,
     { firstWave },
   );
-  assert.equal(scheduled.status, "aborted");
-  assert.equal(scheduled.diagnosticCode, "LIVE_BUDGET_UNREACHABLE");
-  assert.deepEqual(scheduled.dispatches, []);
+  assert.equal(scheduled.status, "ready");
+  assert.deepEqual(scheduled.dispatches, [dispatch(4), dispatch(5), dispatch(6)]);
   assert.equal(scheduled.projection.projectedTotalMs, 695_345);
+  assert.equal(scheduled.projection.abort, true);
 });
 
 test("R6 failure performance metrics always expose all four phase boundaries", () => {

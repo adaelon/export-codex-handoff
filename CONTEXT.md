@@ -121,8 +121,16 @@ A valid published Handoff that preserves verified continuation facts and explici
 _Avoid_: Partial file, fabricated completion, failed export
 
 **Provider Timing Capability**:
-An execution-surface guarantee that provider-reported MAP generation timing can be correlated with one completed MapDispatch and durably recorded before later-wave admission.
+An execution-surface guarantee that provider-reported MAP generation timing can be correlated with one completed MapDispatch and durably recorded for optional performance projection.
 _Avoid_: Harness timing, coordinator elapsed time, inferred latency
+
+**MAP Wave Admission**:
+A durable ordered authorization for the next pending MapDispatches, bounded by one freshly observed worker-slot count and closed until that wave is accepted.
+_Avoid_: Worker batch, inferred capacity, provider-timing gate
+
+**Workflow Deadline**:
+The workflow-owned total-time boundary fixed at workflow creation that alone determines whether another MAP Wave Admission may open; it is independent of provider timing and performance projection.
+_Avoid_: Provider latency, projection target, harness timeout
 
 **Sparse MAP Result**:
 A compact MAP output that states each anchored Claim once, binds Claims to ordered evidence indexes, and represents non-retained evidence with explicit exclusion ranges.

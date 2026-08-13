@@ -12,6 +12,7 @@ import {
   completeMapDispatch,
   prepareCompressionTask,
   prepareFrameStage,
+  scheduleNextMapWave,
   validateFrameStage,
 } from "../scripts/lib/task-workflow.mjs";
 import {
@@ -204,6 +205,7 @@ async function prepareWorkflow(root) {
     anchors: frameInput.requiredFrameAnchors,
   });
   const validated = await validateFrameStage(prepared.workDir);
+  await scheduleNextMapWave(prepared.workDir, validated.mapDispatches.length);
   const segment = validated.segments.find((candidate) => candidate.stage === "progress_map");
   assert.ok(segment);
   const dispatch = validated.mapDispatches.find(

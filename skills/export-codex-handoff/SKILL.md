@@ -62,10 +62,9 @@ node <skill-dir>/scripts/export-handoff.mjs adjudicate <WORK_DIR> --submit <DECI
 node <skill-dir>/scripts/export-handoff.mjs adjudicate <WORK_DIR> --apply
 ```
 
-`--capture` is restricted to the two pre-worker execution-surface observations that do not already
-cross a managed CLI boundary: `MAP_WORKER_UNAVAILABLE` and `PROVIDER_TIMING_UNAVAILABLE`. Every
-other managed command failure already returns `details.adjudication`; inspect that request instead
-of capturing a duplicate.
+`--capture` is restricted to the pre-worker `MAP_WORKER_UNAVAILABLE` observation when it occurs
+outside the managed scheduling command. Every managed command failure already returns
+`details.adjudication`; inspect that request instead of capturing a duplicate.
 
 Choose the decision from evidence, not from a fixed retry order:
 
@@ -140,21 +139,21 @@ Resolve `<skill-dir>` to this skill folder. Run helper commands yourself; do not
    `validate-frame` only through isolated MAP Workers. The coordinator must never open a dispatch
    `chunkPath` or write its `summaryPath`.
 
-   - Immediately before each dispatch wave, inspect the currently available dedicated worker slots.
-     Dispatch no more workers than the fresh slot count. If no slot is available before the first
-     claim, capture `MAP_WORKER_UNAVAILABLE` with `adjudicate --capture`, then enter the Main Codex
-     adjudication loop; never read evidence sequentially in the coordinator.
-   - Before any Worker claim, pass the pending dispatches and fresh slot count through the exported
-     `scheduleMapDispatches`. If all dispatches fit, the structurally single-wave run remains
-     compatible and does not require provider timing. If dispatches remain, supply an exact
-     `ProviderTimingCapability` observed from the current execution surface. Only
-     `{ available: true, source: "provider", observationPoint: "post_worker", reasonCode: null }`
-     admits the first wave. A known unsupported or non-correlatable surface must supply the exact
-     unavailable variant, keep zero admitted dispatches and no Worker claim, capture
-     `PROVIDER_TIMING_UNAVAILABLE` with `adjudicate --capture`, and enter Main Codex Adjudication.
-     Never infer capability from model identity or clocks.
-   - Give exactly one complete packed `MapDispatch` from the admitted first-wave result to each fresh
-     worker. The worker must first claim it:
+   - Immediately before every dispatch wave, including wave 1, inspect the currently available
+     dedicated worker slots and call the durable scheduling ingress:
+
+     ```text
+     node <skill-dir>/scripts/export-handoff.mjs schedule-map <WORK_DIR> <AVAILABLE_SLOTS>
+     ```
+
+     Dispatch only the returned `dispatches`. The ingress persists one ordered admission containing
+     exactly `min(pending, slots)`, refuses to open another wave until the current one is accepted,
+     and repeats until it returns `complete`. If no slot is available or the workflow deadline has
+     expired, enter Main Codex Adjudication; never read evidence sequentially in the coordinator or
+     reuse a prior slot observation.
+   - Give exactly one complete packed `MapDispatch` from the admitted wave to each fresh
+     worker. The worker must first claim it; the public claim boundary rejects any dispatch that
+     is not in the unique current unaccepted durable admission:
 
      ```text
      node <skill-dir>/scripts/export-handoff.mjs validate-map <workDir> <segmentId> --claim <dispatchId> --worker <workerId>
@@ -221,31 +220,23 @@ Resolve `<skill-dir>` to this skill folder. Run helper commands yourself; do not
      bounded diagnostic unchanged to a fresh isolated Worker. `MAP_WORKER_EXHAUSTED` is captured by
      the managed completion command; inspect it and choose a different lawful correction or explicit
      degradation instead of terminating the Compression Run.
-   - After accepting each admitted receipt on a supported surface, take the provider-reported
-     post-worker observation exposed for that exact Worker turn and write the strict nine-field
-     `MapGenerationObservation`. Record it through the separate bounded ingress:
+   - Provider timing is optional telemetry and never controls admission. When the execution surface
+     exposes provider-reported post-worker observations for every dispatch in the admitted waves,
+     write each strict nine-field `MapGenerationObservation` through the separate bounded ingress:
 
      ```text
      node <skill-dir>/scripts/export-handoff.mjs record-map-metric <WORK_DIR> <SEGMENT_ID> <DISPATCH_ID> <OBSERVATION_FILE>
      ```
 
-     The observation must bind the immutable dispatch and segment, provider observation ID, provider
-     latency, model, reasoning effort, wave, and that wave's fresh slot count. Never substitute
-     coordinator, spawn, wait, shell, or harness elapsed time. Keep model and reasoning effort
-     unchanged unless `compareCalibrationRuns` evaluates the same fixture and dispatch count with
-     exactly one changed factor and selects the candidate.
-   - Before any later wave, observe a new fresh slot count and use the production scheduling ingress:
-
-     ```text
-     node <skill-dir>/scripts/export-handoff.mjs schedule-map <WORK_DIR> <AVAILABLE_SLOTS>
-     ```
-
-     It verifies one receipt-bound provider observation and exact workflow durations for every
-     accepted admitted dispatch, then invokes the exported deterministic `projectFirstWaveBudget`
-     with the existing conservative REDUCE/publication reserves. Dispatch only its returned
-     `dispatches`. The managed command captures `INCOMPLETE_FIRST_WAVE_METRICS`,
-     `MAP_WORKER_UNAVAILABLE`, or `LIVE_BUDGET_UNREACHABLE`; enter the Main Codex adjudication loop,
-     do not hand-estimate, call the projector directly, or reuse an earlier slot count.
+     Each observation must bind the immutable dispatch and segment, provider observation ID,
+     provider latency, model, reasoning effort, durable wave number, and that wave's fresh slot
+     count. Never substitute coordinator, spawn, wait, shell, or harness elapsed time. If the
+     surface exposes no complete provider set, record no metric and continue under the workflow
+     deadline. A complete set adds the deterministic `projectFirstWaveBudget` result to the next
+     `schedule-map` response; even when that projection is over target, it remains advisory and the
+     returned dispatches stay admitted. Keep model and reasoning effort unchanged unless
+     `compareCalibrationRuns` evaluates the same fixture and dispatch count with exactly one changed
+     factor and selects the candidate.
    - New runs return no parent aggregate dispatch. After every child receipt is accepted, the
      deterministic workflow folds ordered fragment coverage and existing claims into one parent
      turn without semantic rewriting; a Claim spanning multiple fragments is referenced once in
@@ -321,11 +312,9 @@ Resolve `<skill-dir>` to this skill folder. Run helper commands yourself; do not
    Anchor coverage, no contract-shape retry, output at most 40,000 characters, successful
    `verify-evidence`, and `phaseTimingsMs.total <= 600000`.
 
-   If a fresh structurally multi-wave surface exposes no durable provider-reported per-worker
-   generation duration correlated with one immutable MapDispatch, capture
-   `PROVIDER_TIMING_UNAVAILABLE` before semantic work and let Main Codex choose explicit degradation.
-   Do not reuse an old work directory, substitute another clock, or present single-wave compatibility
-   as multi-wave live success.
+   If a fresh multi-wave surface exposes no durable provider-reported per-worker generation duration,
+   continue without a performance projection and leave provider latency absent. Do not reuse an old
+   work directory, substitute another clock, or describe workflow timing as provider timing.
 
 11. For action-ready live acceptance, use a separate fresh continuation task; the Compression Task
     must not consume its own artifact. Give the continuation task the published Handoff path and the
@@ -344,9 +333,8 @@ Resolve `<skill-dir>` to this skill folder. Run helper commands yourself; do not
 - Never dispatch evidence plus dictionary plus Frame Projection above the configured MAP-input budget.
 - Never accept a continuation candidate above its immutable dispatch MAP-output budget.
 - Never infer worker capacity from an earlier wave; observe dedicated slots immediately before dispatch.
-- Never claim or create a Worker for a structurally multi-wave run after ProviderTimingCapability
-  reports unavailable; keep zero admitted dispatches and capture `PROVIDER_TIMING_UNAVAILABLE` for
-  Main Codex Adjudication.
+- Never bypass `schedule-map`: every Worker claim must belong to its durable wave admission, including
+  wave 1, and a new wave may open only before the workflow deadline.
 - Never fall back to coordinator-side sequential MAP when no isolated worker slot is available.
 - Require an atomic MapDispatch claim and bounded validated MapReceipt before accepting a summary.
 - Preserve every Critical Anchor through exact continuation coverage; keep all other anchors retrievable
@@ -374,8 +362,8 @@ Resolve `<skill-dir>` to this skill folder. Run helper commands yourself; do not
   Handoff Evidence Key map.
 - For `synthesize_first`, require zero Evidence Index reads before the first deliverable draft, then
   enforce the named-reason targeted-read cap with no broad search or full-file reread.
-- Never use harness elapsed time as provider latency or dispatch a later wave after
-  `LIVE_BUDGET_UNREACHABLE`.
+- Never use harness elapsed time as provider latency or treat an over-target provider projection as
+  an admission failure.
 - Never remove a rollback target unless its filesystem identity matches the file created by that publication attempt.
 - Keep intermediate evidence in the managed temporary work directory. Successful publication removes temporary copies but retains both published artifacts; failures retain the managed work directory for diagnosis.
 

@@ -44,10 +44,10 @@ Dedicated Codex Compression Task
                  -> integer-only Frame Projection references + 20k projection gate
                  -> 100k evidence + dictionary + projection MAP-input gate
        -> Compression Task coordinator emits frame-bound MapDispatch capabilities
-            -> performance calibration + first-wave budget projector
+            -> deadline-governed arbitrary-wave scheduler + optional projector
                  -> controlled model/reasoning/slot comparisons
                  -> provider-only generation latency + workflow-only check/accept latency
-                 -> 600000ms conservative later-wave abort
+                 -> over-target provider projection remains advisory
             -> isolated MAP Worker claims exactly one dispatch
                  -> reads one bounded segment + digest-bound dictionary/projection + mode-specific MAP contract
                  -> writes one private sparse or continuation summary candidate
@@ -103,8 +103,8 @@ and replays as `PUBLISHED` without promoting a failed REDUCE candidate or an unv
 MA5 installs the Main Codex operator loop over that state machine: every managed diagnostic is
 inspected, decided, applied, and resumed in the same run; repeated or unprovable corrections select
 explicit degradation rather than user adjudication or a clean run. The bounded `adjudicate --capture`
-ingress admits only the two pre-worker observations that otherwise occur outside a managed command,
-`MAP_WORKER_UNAVAILABLE` and `PROVIDER_TIMING_UNAVAILABLE`. MAP repair requests additionally persist
+ingress admits only a pre-worker `MAP_WORKER_UNAVAILABLE` observation that occurs outside the
+managed scheduling command. MAP repair requests additionally persist
 the exact evidence-safe issue list, so a resumed Worker receives deterministic field-level guidance
 without private evidence. The retained same-run fault-injection proof and exact immutable bindings
 are recorded in [Main Codex Adjudication Live Acceptance](./main-codex-adjudication-live-acceptance.md).
@@ -113,7 +113,7 @@ are recorded in [Main Codex Adjudication Live Acceptance](./main-codex-adjudicat
 v2 prepare -> immutable adjudication-contract.json
 bounded library ingress -> immutable request document -> numbered request_opened event
 adjudicate --inspect -> verify contract + document digests + complete event chain -> replay state
-adjudicate --capture -> pre-worker capacity/timing code allowlist -> schedule-map request policy
+adjudicate --capture -> pre-worker capacity code allowlist -> schedule-map request policy
 adjudicate --submit -> exact run/request/digest/action check -> immutable decision document
                     -> numbered decision_submitted event -> APPLYING_ADJUDICATION
 adjudicate --apply -> retry named phase | regenerate named generation | relocate publication pair
@@ -166,13 +166,13 @@ maps consecutive evidence and exact-identifier indexes back to immutable values;
 rebuilt deterministically before acceptance. The projection is capped at 20,000 characters, and
 evidence plus dictionary plus projection is capped at 100,000 characters. Existing
 `frame-projection-v1` work directories retain
-their 400,000-character evidence-plus-projection path. The coordinator observes currently available
-dedicated worker slots before each dispatch wave and stops with `needs-user` when no slot exists. If
-the current dispatches fit that fresh capacity, the wave needs no timing capability. If dispatches
-remain beyond it, the coordinator validates an exact four-field `ProviderTimingCapability` before
-returning any dispatch: an unavailable capability returns `PROVIDER_TIMING_UNAVAILABLE`, while an
-available provider/post-worker capability admits only the first wave within that capacity. Workers
-then atomically claim one admitted frame-bound MapDispatch,
+their 400,000-character evidence-plus-projection path. The coordinator routes every wave, including
+wave 1, through `schedule-map` with a freshly observed dedicated-worker slot count. The workflow
+deadline admits another wave only while pending work remains; the scheduler persists exactly
+`min(pending, slots)` ordered dispatches and waits for their acceptance before opening the next wave.
+Zero capacity and an expired deadline admit nothing. Provider timing is optional and controls only
+whether a strict performance projection is attached, never whether work is admitted. Workers then
+atomically claim one frame-bound MapDispatch from the unique current unaccepted durable admission,
 read only the contract selected by `mapResultMode`, and write private summary candidates.
 `validate-map --check`
 reports structural or `MAP_OUTPUT_TOO_LARGE` errors without
@@ -190,20 +190,18 @@ runs use the same representative smallest, median, and largest dispatch fixture 
 one of model, reasoning effort, or slot count. Provider-reported MAP and REDUCE generation time is
 kept separate from Node check/complete/accept, REDUCE preparation/check, and transactional
 publication time; harness elapsed time cannot enter a provider field. Immediately after Frame
-validation, the coordinator projects the `createdAt`-to-`frameValidatedAt` workflow duration plus
-fixed conservative 60,000 ms REDUCE and 20,000 ms publication reserves. Invalid UTC boundaries fail
-deterministically; a lower bound above 600,000 ms writes a retained captured-diagnostic projection and returns
-`LIVE_BUDGET_UNREACHABLE` before MAP contexts, MapDispatch descriptors, or claims exist. Before later
-waves, the coordinator calls `schedule-map <WORK_DIR> <AVAILABLE_SLOTS>`. That boundary rereads only
-the manifest and accepted MapReceipts, verifies the receipt-bound metric integrity state, requires
-unique correlated observations and exact workflow durations for every admitted dispatch, and then
-combines the first-wave samples with the newly observed slot count and conservative
-REDUCE/publication reserves. Missing, duplicate, broken, or non-correlated samples produce
-`INCOMPLETE_FIRST_WAVE_METRICS`; zero capacity produces `MAP_WORKER_UNAVAILABLE`; an over-target
-projection produces `LIVE_BUDGET_UNREACHABLE`. Each becomes one active Adjudication Request at the
-managed CLI boundary and cannot create an attempt-2 Worker dispatch or public output. The current model and reasoning
-configuration stays unchanged unless a controlled provider-timed comparison wins; concurrency never
-exceeds the fresh slot observation.
+validation, the coordinator retains the existing pre-dispatch lower-bound check. The production wave
+loop then calls `schedule-map <WORK_DIR> <AVAILABLE_SLOTS>` for every wave. That boundary validates
+the durable ordered admission ledger and the independent workflow deadline before it writes a new
+admission. If no provider observations exist, the loop continues without `providerLatencyMs`. If a
+complete provider set exists, it verifies receipt-bound metric integrity, exact admission wave/slot
+correlation, and workflow durations before attaching the first-wave projection. Missing, duplicate,
+partial, broken, or non-correlated samples produce `INCOMPLETE_FIRST_WAVE_METRICS`; zero capacity
+produces `MAP_WORKER_UNAVAILABLE`; an expired deadline produces `WORKFLOW_DEADLINE_EXCEEDED`. An
+over-target provider projection remains advisory and does not remove admitted dispatches. Managed
+failures become active Adjudication Requests and cannot create an attempt-2 Worker dispatch or public
+output. The current model and reasoning configuration stays unchanged unless a controlled
+provider-timed comparison wins; concurrency never exceeds the fresh slot observation.
 
 The Evidence Index stores every locator, source revision, UTF-16 range, and digest without copying
 complete rollout payloads. New Evidence Packs deterministically select Critical Anchors before
@@ -296,13 +294,12 @@ receipt-bound SHA-256 metric state to the manifest. It reads no chunk, raw/norma
 candidate, Frame Projection, or Evidence Reference Dictionary; identical replay returns the same
 digest without rewriting state, while correlation, receipt, or replay conflicts fail closed.
 
-Multi-wave live acceptance is an execution-surface property, not a repository-only simulation. A
-surface counts as supported only when its Worker result contains a durable provider-reported duration
-that the host can bind to the immutable MapDispatch before later-wave admission. Package-tree equality,
-single-wave compatibility, or coordinator elapsed time cannot satisfy that boundary. The current
-surface observation and exact unblock condition are recorded in
-[Provider Timing Live Acceptance](./provider-timing-live-acceptance.md); an unsupported surface exits
-before semantic MAP work and leaves publication unopened.
+Provider-timed performance acceptance is an execution-surface property, not a repository-only
+simulation. A provider projection exists only when the host can bind a complete set of durable
+provider-reported durations to the exact wave admissions; coordinator elapsed time cannot satisfy
+that boundary. Absence of provider timing no longer blocks semantic MAP work. The historical blocker
+under the superseded admission rule remains recorded in
+[Provider Timing Live Acceptance](./provider-timing-live-acceptance.md).
 
 The v2 publisher validates the Handoff budget, Evidence Index budget, coverage graph, frozen frame,
 source-revision binding, and live Source Thread revision before either output is visible. Sparse,
@@ -347,13 +344,13 @@ Source Thread UUID
        -> local evidence indexes + local exact-identifier indexes -> immutable dictionary digest
   -> compact Frame Projection bound to dictionary + global frame digest
   -> dictionary/projection/input/output-bound MapDispatch
-       -> observe fresh dedicated slots
-            -> zero slots: MAP_WORKER_UNAVAILABLE + zero admitted dispatches
-            -> all pending dispatches fit: admit one structural wave without timing capability
-            -> later wave required: validate exact ProviderTimingCapability
-                 -> unavailable: PROVIDER_TIMING_UNAVAILABLE + zero admitted dispatches
-                 -> available provider/post_worker surface: admit first wave within fresh capacity
-  -> isolated worker atomic claim
+  -> schedule-map <WORK_DIR> <AVAILABLE_SLOTS> for wave 1..N
+       -> validate workflow deadline + durable ordered admission ledger
+       -> zero slots: MAP_WORKER_UNAVAILABLE + zero newly admitted dispatches
+       -> expired deadline: WORKFLOW_DEADLINE_EXCEEDED + zero newly admitted dispatches
+       -> active unaccepted wave: awaiting-acceptance + zero newly admitted dispatches
+       -> admit min(pending, fresh slots); persist wave/slots/ordered segment IDs
+  -> isolated worker atomic claim from the unique current unaccepted admission
   -> worker reads private chunk -> writes mode-specific private MAP candidate
   -> non-consuming structure/output check -> immutable candidate digest
        -> [continuation v2] collect MAP-owned candidate issues before receipt acceptance
@@ -373,15 +370,13 @@ Source Thread UUID
        -> receipt-bound SHA-256 metric digest -> additive manifest integrity state
        -> identical replay: stable; conflict/mismatch: fail closed without receipt mutation
   -> workflow-owned check/complete/accept observation remains separate from provider latency
-  -> schedule-map <WORK_DIR> <AVAILABLE_SLOTS>
-       -> accepted receipt + metric digest integrity validation
-       -> unique correlated observations + contiguous complete wave groups
-       -> missing/duplicate/broken sample: INCOMPLETE_FIRST_WAVE_METRICS
-       -> fresh slots == 0: MAP_WORKER_UNAVAILABLE
+  -> optional record-map-metric set
+       -> no observations: no projection and no providerLatencyMs
+       -> complete observations: accepted receipt + metric digest + admission correlation
+       -> missing/duplicate/partial/broken sample: INCOMPLETE_FIRST_WAVE_METRICS
        -> first-wave conservative projection with fixed REDUCE/publication reserves
-            -> <=600000ms: dispatch next wave within freshly observed slots
-            -> >600000ms: LIVE_BUDGET_UNREACHABLE
-       -> every failure: active Adjudication Request + retained projection; no retry/publication
+            -> advisory at any projected total; never removes admitted dispatches
+  -> repeat schedule-map until pending == 0 -> complete
   -> [sparse/legacy fragment path] all child receipts validate -> deterministic parent summary
   -> [continuation] completed tables -> one global Claim table + Critical Anchor disposition
        -> deterministic Accepted Proposal/Terminal-State Claims inserted once
@@ -438,7 +433,8 @@ re-runs an indexed workspace observation and fails closed if its source revision
 - **Implemented coordinator-isolated sparse expansion**: [Worker-bound Sparse MAP Expansion](./adr/0010-worker-bound-sparse-map-expansion.md)
 - **Implemented retrieval/critical-coverage separation**: [Continuation-Grade Evidence Compression](./adr/0011-continuation-grade-evidence-compression.md)
 - **Action-ready Hot/Cold boundary and staged v2 route**: [Action-Ready Handoff Hot/Cold Boundary](./adr/0013-action-ready-handoff-hot-cold-boundary.md)
-- **Provider-observation admission and persistence boundary**: [Provider Timing Capability for Multi-Wave MAP](./adr/0014-provider-timing-capability-for-multi-wave-map.md)
+- **Partially superseded provider-observation persistence boundary**: [Provider Timing Capability for Multi-Wave MAP](./adr/0014-provider-timing-capability-for-multi-wave-map.md)
+- **Deadline-governed arbitrary-wave admission**: [Deadline-Governed Arbitrary-Wave MAP Scheduling](./adr/0017-deadline-governed-arbitrary-wave-map-scheduling.md)
 - **Implemented earliest-owner targeted MAP repair (TR1-TR4)**: [Earliest-Owner Targeted MAP Repair](./adr/0015-earliest-owner-targeted-map-repair.md)
 - **Implemented empty-Progress earliest-owner repair (TR5)**: [Targeted MAP repair slices](./slice-plan-targeted-map-repair.md#slice-tr5--empty-progress-map-ownership)
 - **Implemented Main Codex durable contract, all-stage capture, decision application, degraded publication, and operator loop (MA1-MA5)**: [Main Codex Adjudication Loop](./adr/0016-main-codex-adjudication-loop.md)

@@ -462,6 +462,8 @@ test("new prepare creates a version-bound v2 work directory", async () => {
       sessionId: SESSION_ID,
       workDir: prepared.workDir,
       mapResultMode: "sparse-map-v1",
+      createdAt: manifest.createdAt,
+      workflowDeadlineAt: manifest.workflowDeadlineAt,
       maxAggregateMapOutputChars: Math.floor(40_000 * 0.85) * 3,
       mapContextMode: "reference-frame-projection-v1",
       maxFrameProjectionChars: 20_000,

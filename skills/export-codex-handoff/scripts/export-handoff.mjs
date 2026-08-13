@@ -62,13 +62,14 @@ Prepare options:
   --codex-home <path>      Override CODEX_HOME for Source Thread discovery
   --help                   Show this help
 
-Provider timing for multi-wave MAP:
-  1. Observe fresh dedicated slots and ProviderTimingCapability before any Worker claim.
-  2. If slots or timing are unavailable before the first Worker claim, capture the exact
-     MAP_WORKER_UNAVAILABLE or PROVIDER_TIMING_UNAVAILABLE diagnostic for adjudication.
-  3. After accepting each admitted Worker receipt, use record-map-metric with
-     provider-reported latency only.
-  4. Before a later wave, observe fresh slots again and use schedule-map.
+MAP wave scheduling and optional provider timing:
+  1. Before every wave, including wave 1, observe fresh dedicated slots and use schedule-map.
+  2. schedule-map durably admits min(pending, slots) until it reports complete; zero slots or an
+     expired workflow deadline enters adjudication without admitting another dispatch.
+  3. Provider timing never controls admission. When the surface exposes a complete admitted-wave
+     set, use record-map-metric with provider-reported latency only; otherwise record no metric.
+  4. A complete provider-timing set adds a performance projection, but an over-target projection
+     remains advisory and does not remove admitted dispatches.
   Never substitute coordinator or harness elapsed time for provider latency.`;
 }
 
@@ -209,12 +210,6 @@ const OPERATOR_CAPTURE_DIAGNOSTICS = Object.freeze({
     message: "No fresh dedicated MAP Worker slot is available before dispatch",
     context: Object.freeze({ availableSlots: 0 }),
   }),
-  PROVIDER_TIMING_UNAVAILABLE: Object.freeze({
-    phase: "schedule-map",
-    message:
-      "The execution surface exposes no provider timing capability required before first-wave dispatch",
-    context: Object.freeze({}),
-  }),
 });
 
 function operatorCaptureSpec(code) {
@@ -222,7 +217,7 @@ function operatorCaptureSpec(code) {
   if (!spec) {
     throw new ExportHandoffError(
       "INVALID_ADJUDICATION_CAPTURE",
-      "Only MAP_WORKER_UNAVAILABLE or PROVIDER_TIMING_UNAVAILABLE may enter through --capture",
+      "Only MAP_WORKER_UNAVAILABLE may enter through --capture",
     );
   }
   return spec;

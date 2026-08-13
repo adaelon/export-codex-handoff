@@ -68,6 +68,7 @@ import {
 import { validateProgressEvidence } from "./progress-evidence.mjs";
 import {
   buildPerformanceMetrics,
+  LIVE_ACCEPTANCE_TARGET_MS,
   PRE_DISPATCH_PUBLICATION_RESERVE_MS,
   PRE_DISPATCH_REDUCE_RESERVE_MS,
   projectPreDispatchLowerBound,
@@ -447,6 +448,8 @@ async function assertWorkflowVersionBinding(manifest, workDir) {
   const bindingHasMapInputBudget = Object.hasOwn(binding, "maxMapInputChars");
   const bindingHasFrameContract = Object.hasOwn(binding, "frameContractVersion");
   const manifestHasFrameContract = Object.hasOwn(manifest, "frameContractVersion");
+  const bindingHasWorkflowDeadline = Object.hasOwn(binding, "workflowDeadlineAt");
+  const manifestHasWorkflowDeadline = Object.hasOwn(manifest, "workflowDeadlineAt");
   const expectedKeys = [
     "kind",
     "formatVersion",
@@ -458,6 +461,7 @@ async function assertWorkflowVersionBinding(manifest, workDir) {
     ...(bindingHasProjectionBudget ? ["maxFrameProjectionChars"] : []),
     ...(bindingHasMapInputBudget ? ["maxMapInputChars"] : []),
     ...(bindingHasFrameContract ? ["frameContractVersion"] : []),
+    ...(bindingHasWorkflowDeadline ? ["createdAt", "workflowDeadlineAt"] : []),
   ];
   const validContextBinding = bindingHasMapContextMode
     ? (
@@ -483,6 +487,16 @@ async function assertWorkflowVersionBinding(manifest, workDir) {
     bindingHasMapResultMode !== manifestHasMapResultMode ||
     bindingHasMapOutputBudget !== manifestHasMapOutputBudget ||
     bindingHasFrameContract !== manifestHasFrameContract ||
+    bindingHasWorkflowDeadline !== manifestHasWorkflowDeadline ||
+    (
+      bindingHasWorkflowDeadline &&
+      (
+        binding.createdAt !== manifest.createdAt ||
+        binding.workflowDeadlineAt !== manifest.workflowDeadlineAt ||
+        Date.parse(binding.workflowDeadlineAt) !==
+          Date.parse(binding.createdAt) + LIVE_ACCEPTANCE_TARGET_MS
+      )
+    ) ||
     (
       bindingHasFrameContract &&
       (
@@ -1636,11 +1650,16 @@ export async function prepareCompressionTask(options, dependencies = {}) {
       dispatch: null,
       workerStatus: "not_required",
     }));
+    const createdAt = new Date().toISOString();
     const manifest = {
       formatVersion: CURRENT_WORKFLOW_VERSION,
       kind: "codex-handoff-compression-task",
       managedWorkDir: true,
-      createdAt: new Date().toISOString(),
+      createdAt,
+      workflowDeadlineAt: new Date(
+        Date.parse(createdAt) + LIVE_ACCEPTANCE_TARGET_MS,
+      ).toISOString(),
+      mapWaveAdmissions: [],
       sessionId,
       workRoot,
       workDir,
@@ -1685,6 +1704,8 @@ export async function prepareCompressionTask(options, dependencies = {}) {
       sessionId,
       workDir,
       mapResultMode: manifest.mapResultMode,
+      createdAt: manifest.createdAt,
+      workflowDeadlineAt: manifest.workflowDeadlineAt,
       maxAggregateMapOutputChars: manifest.maxAggregateMapOutputChars,
       mapContextMode: manifest.mapContextMode,
       maxFrameProjectionChars: manifest.maxFrameProjectionChars,
@@ -1982,7 +2003,12 @@ export async function validateFrameStage(workDir) {
   };
 }
 
-export async function claimMapDispatch(workDir, segmentId, dispatchId, workerId) {
+export async function claimMapDispatch(
+  workDir,
+  segmentId,
+  dispatchId,
+  workerId,
+) {
   const manifest = await loadManifest(workDir);
   const frozenFrame = await loadFrozenFrame(manifest);
   const stage = findMapStage(manifest, segmentId);
@@ -1999,6 +2025,19 @@ export async function claimMapDispatch(workDir, segmentId, dispatchId, workerId)
     ...(stage.contextDigest ? { contextDigest: stage.contextDigest } : {}),
     ...(stage.dictionaryDigest ? { dictionaryDigest: stage.dictionaryDigest } : {}),
   });
+  const stages = [
+    ...(manifest.segments || []),
+    ...(manifest.turnAggregates || []),
+  ].filter((candidate) => candidate.dispatch);
+  const { admissionsBySegment, stagesById } = requireMapWaveAdmissions(manifest, stages);
+  const activeAdmission = currentUnacceptedMapAdmission(manifest, stagesById);
+  const admission = admissionsBySegment.get(segmentId);
+  if (!activeAdmission || admission !== activeAdmission) {
+    throw new ExportHandoffError(
+      "MAP_DISPATCH_NOT_ADMITTED",
+      `${segmentId} is not part of the current unaccepted durable MAP wave admission`,
+    );
+  }
   if (stage.workerStatus === "validated" || await pathExists(stage.receiptPath)) {
     throw new ExportHandoffError(
       "DUPLICATE_MAP_RECEIPT",
@@ -2446,11 +2485,29 @@ function validateObservationCorrelation(manifest, stage, observation) {
       "MapGenerationObservation dispatchId and segmentId must match the immutable MapDispatch",
     );
   }
-  let observationsInWave = 0;
-  for (const candidate of [
+  const stages = [
     ...(manifest.segments || []),
     ...(manifest.turnAggregates || []),
-  ]) {
+  ].filter((candidate) => candidate.dispatch);
+  const { admissionsBySegment } = requireMapWaveAdmissions(manifest, stages);
+  const admission = admissionsBySegment.get(stage.segmentId);
+  if (!admission) {
+    throw new ExportHandoffError(
+      "MAP_GENERATION_OBSERVATION_MISMATCH",
+      "MapGenerationObservation requires a durable MAP wave admission for its dispatch",
+    );
+  }
+  if (
+    observation.wave !== admission.wave ||
+    observation.availableSlots !== admission.availableSlots
+  ) {
+    throw new ExportHandoffError(
+      "MAP_GENERATION_OBSERVATION_MISMATCH",
+      "MapGenerationObservation wave and availableSlots must match its durable MAP wave admission",
+    );
+  }
+  let observationsInWave = 0;
+  for (const candidate of stages) {
     if (!candidate.mapGenerationMetric || candidate === stage) continue;
     validateMapDispatch(candidate.dispatch, {
       segmentId: candidate.segmentId,
@@ -2717,30 +2774,209 @@ function validateAcceptedWaveGroups(stageMetrics, totalDispatches) {
   return orderedWaves;
 }
 
-async function collectLaterWaveSchedulingInput(manifest) {
-  if (manifest.mapGenerationMetricMode !== MAP_GENERATION_METRIC_MODE) {
+function requireWorkflowDeadline(manifest) {
+  const createdAtMs = Date.parse(manifest.createdAt || "");
+  const deadlineAtMs = Date.parse(manifest.workflowDeadlineAt || "");
+  if (
+    !Number.isFinite(createdAtMs) ||
+    !Number.isFinite(deadlineAtMs) ||
+    deadlineAtMs !== createdAtMs + LIVE_ACCEPTANCE_TARGET_MS ||
+    new Date(deadlineAtMs).toISOString() !== manifest.workflowDeadlineAt
+  ) {
     throw new ExportHandoffError(
-      "PROVIDER_TIMING_INGRESS_UNAVAILABLE",
-      "Later-wave scheduling requires the immutable post-worker provider-observation binding",
+      "INVALID_WORKFLOW_DEADLINE",
+      `Workflow deadline must be the canonical createdAt + ${LIVE_ACCEPTANCE_TARGET_MS} ms boundary`,
     );
   }
+  return { deadlineAt: manifest.workflowDeadlineAt, deadlineAtMs };
+}
+
+function requireMapWaveAdmissions(manifest, stages) {
+  if (!Array.isArray(manifest.mapWaveAdmissions)) {
+    throw new ExportHandoffError(
+      "INVALID_MAP_WAVE_STATE",
+      "MAP wave admissions must be a durable ordered array",
+    );
+  }
+  const stagesById = new Map(stages.map((stage) => [stage.segmentId, stage]));
+  const admitted = new Set();
+  const admissionsBySegment = new Map();
+  let nextStageIndex = 0;
+  for (const [index, admission] of manifest.mapWaveAdmissions.entries()) {
+    const expectedKeys = ["wave", "availableSlots", "admittedAt", "segmentIds"];
+    const expectedDispatches = Math.min(
+      stages.length - nextStageIndex,
+      admission?.availableSlots || 0,
+    );
+    const expectedSegmentIds = stages
+      .slice(nextStageIndex, nextStageIndex + expectedDispatches)
+      .map((stage) => stage.segmentId);
+    if (
+      !admission ||
+      typeof admission !== "object" ||
+      Array.isArray(admission) ||
+      Object.keys(admission).length !== expectedKeys.length ||
+      expectedKeys.some((key) => !Object.hasOwn(admission, key)) ||
+      admission.wave !== index + 1 ||
+      !Number.isInteger(admission.availableSlots) ||
+      admission.availableSlots < 1 ||
+      !Number.isFinite(Date.parse(admission.admittedAt || "")) ||
+      new Date(Date.parse(admission.admittedAt)).toISOString() !== admission.admittedAt ||
+      !Array.isArray(admission.segmentIds) ||
+      admission.segmentIds.length !== expectedDispatches ||
+      new Set(admission.segmentIds).size !== admission.segmentIds.length
+    ) {
+      throw new ExportHandoffError(
+        "INVALID_MAP_WAVE_STATE",
+        `MAP wave admission ${index + 1} is invalid`,
+      );
+    }
+    for (let segmentIndex = 0; segmentIndex < admission.segmentIds.length; segmentIndex += 1) {
+      const segmentId = admission.segmentIds[segmentIndex];
+      if (
+        !stagesById.has(segmentId) ||
+        admitted.has(segmentId) ||
+        segmentId !== expectedSegmentIds[segmentIndex]
+      ) {
+        throw new ExportHandoffError(
+          "INVALID_MAP_WAVE_STATE",
+          `MAP wave admission ${admission.wave} does not contain the next ordered pending segments`,
+        );
+      }
+      admitted.add(segmentId);
+      admissionsBySegment.set(segmentId, admission);
+    }
+    nextStageIndex += admission.segmentIds.length;
+  }
+  return { admitted, admissionsBySegment, stagesById };
+}
+
+function currentUnacceptedMapAdmission(manifest, stagesById) {
+  const unacceptedAdmissions = manifest.mapWaveAdmissions.filter((admission) => (
+    admission.segmentIds.some(
+      (segmentId) => !stagesById.get(segmentId)?.receiptAcceptedAt,
+    )
+  ));
+  if (unacceptedAdmissions.length > 1) {
+    throw new ExportHandoffError(
+      "INVALID_MAP_WAVE_STATE",
+      "Only one durable MAP wave admission may await receipt acceptance",
+      { waves: unacceptedAdmissions.map((admission) => admission.wave) },
+    );
+  }
+  return unacceptedAdmissions[0] || null;
+}
+
+function validateAcceptedProviderWaveGroups(stageMetrics, admissions, totalDispatches) {
+  const waveGroups = validateAcceptedWaveGroups(stageMetrics, totalDispatches);
+  if (waveGroups.length !== admissions.length) {
+    incompleteFirstWaveMetrics(
+      "Provider observations must cover every accepted MAP wave before projection",
+    );
+  }
+  for (let index = 0; index < admissions.length; index += 1) {
+    const admission = admissions[index];
+    const group = waveGroups[index];
+    if (
+      group.wave !== admission.wave ||
+      group.availableSlots !== admission.availableSlots ||
+      group.samples.length !== admission.segmentIds.length ||
+      group.samples.some(
+        (sample, sampleIndex) => sample.stage.segmentId !== admission.segmentIds[sampleIndex],
+      )
+    ) {
+      incompleteFirstWaveMetrics(
+        `Provider observations do not match durable MAP wave admission ${admission.wave}`,
+      );
+    }
+  }
+  return waveGroups;
+}
+
+async function collectMapWaveSchedulingInput(manifest) {
   const stages = [
     ...(manifest.segments || []),
     ...(manifest.turnAggregates || []),
   ].filter((stage) => stage.dispatch);
   if (stages.length === 0) {
-    incompleteFirstWaveMetrics("Later-wave scheduling requires at least one MapDispatch");
+    throw new ExportHandoffError(
+      "MAP_DISPATCH_MISSING",
+      "MAP wave scheduling requires at least one MapDispatch",
+    );
   }
   const acceptedStages = stages.filter((stage) => stage.receiptAcceptedAt);
-  const pendingStages = stages.filter((stage) => (
-    !stage.receiptAcceptedAt && stage.workerStatus === "pending"
-  ));
   const exhausted = stages.find((stage) => stage.workerStatus === "exhausted");
   if (exhausted) {
     throw new ExportHandoffError(
       "MAP_WORKER_EXHAUSTED",
       `${exhausted.segmentId} exhausted both MAP Worker attempts`,
       { diagnosticsDir: exhausted.diagnosticsDir },
+    );
+  }
+  const admissions = manifest.mapWaveAdmissions;
+  const { admitted, stagesById } = requireMapWaveAdmissions(manifest, stages);
+  const unadmittedAccepted = acceptedStages.filter(
+    (stage) => !admitted.has(stage.segmentId),
+  );
+  if (unadmittedAccepted.length > 0) {
+    throw new ExportHandoffError(
+      "INVALID_MAP_WAVE_STATE",
+      "Accepted MAP dispatches must belong to a durable wave admission",
+      { segmentIds: unadmittedAccepted.map((stage) => stage.segmentId) },
+    );
+  }
+  const activeAdmission = currentUnacceptedMapAdmission(manifest, stagesById);
+  const activeStages = activeAdmission
+    ? activeAdmission.segmentIds.map((segmentId) => (
+      stages.find((stage) => stage.segmentId === segmentId)
+    ))
+    : [];
+  const awaitingAcceptance = activeStages.filter((stage) => !stage.receiptAcceptedAt);
+  if (awaitingAcceptance.length > 0) {
+    return {
+      complete: false,
+      awaitingAcceptance: true,
+      wave: activeAdmission.wave,
+      acceptedDispatches: acceptedStages.length,
+      pendingDispatches: stages
+        .filter((stage) => !stage.receiptAcceptedAt && !admitted.has(stage.segmentId))
+        .map((stage) => stage.dispatch),
+      activeDispatches: awaitingAcceptance.map((stage) => stage.dispatch),
+    };
+  }
+  const pendingStages = stages.filter((stage) => (
+    !stage.receiptAcceptedAt && !admitted.has(stage.segmentId) && stage.workerStatus === "pending"
+  ));
+  const nonSchedulable = stages.filter((stage) => (
+    !stage.receiptAcceptedAt && !admitted.has(stage.segmentId) && stage.workerStatus !== "pending"
+  ));
+  if (nonSchedulable.length > 0) {
+    incompleteFirstWaveMetrics(
+      "Every unfinished MAP dispatch must remain pending before a later wave is scheduled",
+      { segmentIds: nonSchedulable.map((stage) => stage.segmentId) },
+    );
+  }
+  const metricStages = acceptedStages.filter((stage) => stage.mapGenerationMetric);
+  let waveGroups = null;
+  if (metricStages.length > 0) {
+    if (metricStages.length !== acceptedStages.length) {
+      incompleteFirstWaveMetrics(
+        "Provider timing is optional, but a partial accepted-wave observation set is invalid",
+        {
+          missingDispatchIds: acceptedStages
+            .filter((stage) => !stage.mapGenerationMetric)
+            .map((stage) => stage.dispatch.dispatchId),
+        },
+      );
+    }
+    const stageMetrics = [];
+    for (const stage of acceptedStages) {
+      stageMetrics.push(await validatedAcceptedStageMetric(stage));
+    }
+    waveGroups = validateAcceptedProviderWaveGroups(
+      stageMetrics,
+      admissions,
+      stages.length,
     );
   }
   if (pendingStages.length === 0 && acceptedStages.length === stages.length) {
@@ -2751,63 +2987,44 @@ async function collectLaterWaveSchedulingInput(manifest) {
       pendingDispatches: [],
     };
   }
-  const nonSchedulable = stages.filter((stage) => (
-    !stage.receiptAcceptedAt && stage.workerStatus !== "pending"
-  ));
-  if (nonSchedulable.length > 0) {
-    incompleteFirstWaveMetrics(
-      "Every unfinished MAP dispatch must remain pending before a later wave is scheduled",
-      { segmentIds: nonSchedulable.map((stage) => stage.segmentId) },
+  let firstWave = null;
+  if (waveGroups) {
+    const firstWaveGroup = waveGroups[0];
+    const prepareAndFrameMs = elapsedMs(
+      manifest.createdAt,
+      manifest.frameValidatedAt,
     );
-  }
-  const missingMetrics = acceptedStages
-    .filter((stage) => !stage.mapGenerationMetric)
-    .map((stage) => stage.dispatch.dispatchId);
-  if (acceptedStages.length === 0 || missingMetrics.length > 0) {
-    incompleteFirstWaveMetrics(
-      "Every accepted first-wave dispatch requires one provider observation",
-      { missingDispatchIds: missingMetrics },
-    );
-  }
-
-  const stageMetrics = [];
-  for (const stage of acceptedStages) {
-    stageMetrics.push(await validatedAcceptedStageMetric(stage));
-  }
-  const waveGroups = validateAcceptedWaveGroups(stageMetrics, stages.length);
-  const firstWave = waveGroups[0];
-  const prepareAndFrameMs = elapsedMs(
-    manifest.createdAt,
-    manifest.frameValidatedAt,
-  );
-  if (prepareAndFrameMs === null) {
-    incompleteFirstWaveMetrics(
-      "Later-wave scheduling requires valid prepare/frame phase boundaries",
-    );
-  }
-  return {
-    complete: false,
-    nextWave: waveGroups.at(-1).wave + 1,
-    pendingDispatches: pendingStages.map((stage) => stage.dispatch),
-    firstWave: {
+    if (prepareAndFrameMs === null) {
+      incompleteFirstWaveMetrics(
+        "Performance projection requires valid prepare/frame phase boundaries",
+      );
+    }
+    firstWave = {
       totalDispatches: stages.length,
-      completedDispatches: firstWave.samples.length,
+      completedDispatches: firstWaveGroup.samples.length,
       prepareAndFrameMs,
-      mapGenerationSamples: firstWave.samples.map(
+      mapGenerationSamples: firstWaveGroup.samples.map(
         (sample) => sample.observation.providerLatencyMs,
       ),
-      checkAcceptSamples: firstWave.samples.map(
+      checkAcceptSamples: firstWaveGroup.samples.map(
         (sample) => sample.checkAcceptMs,
       ),
       reduceMs: PRE_DISPATCH_REDUCE_RESERVE_MS,
       publicationMs: PRE_DISPATCH_PUBLICATION_RESERVE_MS,
-    },
+    };
+  }
+  return {
+    complete: false,
+    awaitingAcceptance: false,
+    nextWave: admissions.length + 1,
+    pendingDispatches: pendingStages.map((stage) => stage.dispatch),
+    firstWave,
   };
 }
 
 async function scheduleNextMapWaveInternal(workDir, availableSlots) {
   const manifest = await loadManifest(workDir);
-  const input = await collectLaterWaveSchedulingInput(manifest);
+  const input = await collectMapWaveSchedulingInput(manifest);
   if (input.complete) {
     return {
       status: "complete",
@@ -2816,6 +3033,31 @@ async function scheduleNextMapWaveInternal(workDir, availableSlots) {
       totalDispatches: input.totalDispatches,
       acceptedDispatches: input.acceptedDispatches,
     };
+  }
+  if (input.awaitingAcceptance) {
+    return {
+      status: "awaiting-acceptance",
+      availableSlots,
+      wave: input.wave,
+      dispatches: [],
+      activeDispatches: input.activeDispatches,
+      pendingDispatches: input.pendingDispatches.length,
+      acceptedDispatches: input.acceptedDispatches,
+    };
+  }
+  const deadline = requireWorkflowDeadline(manifest);
+  const observedAt = new Date().toISOString();
+  if (Date.parse(observedAt) >= deadline.deadlineAtMs) {
+    throw new ExportHandoffError(
+      "WORKFLOW_DEADLINE_EXCEEDED",
+      `Workflow deadline ${deadline.deadlineAt} does not permit another MAP wave`,
+      {
+        wave: input.nextWave,
+        availableSlots,
+        deadlineAt: deadline.deadlineAt,
+        observedAt,
+      },
+    );
   }
   const schedulable = input.pendingDispatches.slice(
     0,
@@ -2826,21 +3068,25 @@ async function scheduleNextMapWaveInternal(workDir, availableSlots) {
   const scheduled = scheduleMapDispatches(
     schedulable,
     availableSlots,
-    { firstWave: input.firstWave },
+    input.firstWave ? { firstWave: input.firstWave } : {},
   );
   if (scheduled.status !== "ready") {
     throw new ExportHandoffError(
       scheduled.diagnosticCode,
-      scheduled.diagnosticCode === "MAP_WORKER_UNAVAILABLE"
-        ? "No fresh dedicated MAP Worker slot is available for the next wave"
-        : `Later-wave projection ${scheduled.projection.projectedTotalMs} ms exceeds the ${scheduled.projection.targetMs} ms live acceptance target`,
+      "No fresh dedicated MAP Worker slot is available for the next wave",
       {
         wave: input.nextWave,
         availableSlots,
-        ...(scheduled.projection ? { projection: scheduled.projection } : {}),
       },
     );
   }
+  manifest.mapWaveAdmissions.push({
+    wave: input.nextWave,
+    availableSlots,
+    admittedAt: observedAt,
+    segmentIds: scheduled.dispatches.map((dispatch) => dispatch.segmentId),
+  });
+  await writeManifest(manifest);
   return {
     ...scheduled,
     wave: input.nextWave,
@@ -2875,10 +3121,14 @@ export async function validateMapStage(workDir, segmentId) {
       throw new ExportHandoffError("MAP_DISPATCH_MISSING", `${segmentId} has no MAP dispatch`);
     }
   }
-  const refreshed = await loadManifest(workDir);
-  const current = findMapStage(refreshed, segmentId);
-  const claimPath = dispatchClaimPath(refreshed, current.dispatch.dispatchId);
+  let refreshed = await loadManifest(workDir);
+  let current = findMapStage(refreshed, segmentId);
+  let claimPath = dispatchClaimPath(refreshed, current.dispatch.dispatchId);
   if (!(await pathExists(claimPath))) {
+    await scheduleNextMapWaveInternal(workDir, 1);
+    refreshed = await loadManifest(workDir);
+    current = findMapStage(refreshed, segmentId);
+    claimPath = dispatchClaimPath(refreshed, current.dispatch.dispatchId);
     await claimMapDispatch(
       workDir,
       segmentId,

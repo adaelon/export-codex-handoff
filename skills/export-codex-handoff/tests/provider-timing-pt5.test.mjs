@@ -63,7 +63,7 @@ test("PT5 keeps legacy, missing-mode, sparse, continuation, and single-wave v2 d
   assert.deepEqual(singleWave.dispatches, [routes.continuationV2]);
 });
 
-test("PT5 rejects unsupported multi-wave timing before a claim and keeps provider source strict", () => {
+test("PT5 admits multi-wave work without timing and keeps provider source strict", () => {
   const dispatches = createProviderTimingDispatches(createMapDispatch);
   const frozenDispatches = structuredClone(dispatches);
   const scheduled = scheduleMapDispatches(
@@ -76,9 +76,9 @@ test("PT5 rejects unsupported multi-wave timing before a claim and keeps provide
   );
 
   assert.deepEqual(scheduled, {
-    status: "needs-user",
-    diagnosticCode: "PROVIDER_TIMING_UNAVAILABLE",
-    dispatches: [],
+    status: "ready",
+    availableSlots: PROVIDER_TIMING_PT2_FIXTURE.freshSlots,
+    dispatches: dispatches.slice(0, PROVIDER_TIMING_PT2_FIXTURE.freshSlots),
   });
   assert.deepEqual(dispatches, frozenDispatches);
   assert.throws(
@@ -90,21 +90,23 @@ test("PT5 rejects unsupported multi-wave timing before a claim and keeps provide
   );
 });
 
-test("PT5 CLI help exposes the fail-early and post-worker provider timing lifecycle", () => {
+test("PT5 CLI help exposes arbitrary waves and optional strict provider timing", () => {
   const help = execFileSync(process.execPath, [CLI_PATH, "--help"], {
     encoding: "utf8",
     windowsHide: true,
   });
 
-  assert.match(help, /Provider timing for multi-wave MAP:/u);
-  assert.match(help, /before any Worker claim/u);
-  assert.match(help, /PROVIDER_TIMING_UNAVAILABLE/u);
+  assert.match(help, /MAP wave scheduling and optional provider timing:/u);
+  assert.match(help, /Before every wave, including wave 1/u);
+  assert.match(help, /workflow deadline/u);
+  assert.match(help, /Provider timing never controls admission/u);
+  assert.match(help, /over-target projection[\s\S]+remains advisory/u);
   assert.match(help, /provider-reported latency only/u);
   assert.match(help, /Never substitute coordinator or harness elapsed time/u);
   assert.ok(help.indexOf("record-map-metric") < help.indexOf("schedule-map"));
 });
 
-test("PT5 Skill, contracts, metadata, architecture, and live report name the exact blocker", () => {
+test("PT5 current contracts supersede timing admission while retaining the historical blocker", () => {
   const skill = fs.readFileSync(path.join(SKILL_DIR, "SKILL.md"), "utf8");
   const contracts = fs.readFileSync(
     path.join(SKILL_DIR, "references", "contracts.md"),
@@ -128,14 +130,16 @@ test("PT5 Skill, contracts, metadata, architecture, and live report name the exa
   );
 
   for (const contract of [skill, contracts]) {
-    assert.match(contract, /ProviderTimingCapability/u);
-    assert.match(contract, /PROVIDER_TIMING_UNAVAILABLE/u);
     assert.match(contract, /record-map-metric <WORK_DIR>/u);
     assert.match(contract, /schedule-map <WORK_DIR>/u);
     assert.match(contract, /provider-reported/u);
+    assert.match(contract, /workflow deadline/u);
+    assert.doesNotMatch(contract, /capture `PROVIDER_TIMING_UNAVAILABLE`/u);
   }
-  assert.match(metadata, /provider timing capability/iu);
+  assert.match(contracts, /ProviderTimingCapability/u);
+  assert.match(metadata, /Admit every MAP wave through fresh capacity and the workflow deadline/iu);
   assert.match(architecture, /provider-timing-live-acceptance\.md/u);
+  assert.match(architecture, /Deadline-Governed Arbitrary-Wave MAP Scheduling/u);
   assert.match(plan, /PT5 packaging complete; live acceptance BLOCKED/u);
   assert.match(liveReport, /^Status: BLOCKED$/mu);
   assert.match(liveReport, /collaboration\.list_agents/u);

@@ -28,6 +28,7 @@ import {
   completeMapDispatch,
   prepareCompressionTask,
   prepareFrameStage,
+  scheduleNextMapWave,
   validateFrameStage,
 } from "../scripts/lib/task-workflow.mjs";
 
@@ -219,6 +220,7 @@ async function preparedContinuationWorkflow(root) {
     anchors: frameInput.requiredFrameAnchors,
   });
   const validated = await validateFrameStage(prepared.workDir);
+  await scheduleNextMapWave(prepared.workDir, validated.mapDispatches.length);
   const dispatch = validated.mapDispatches[0];
   const dictionary = JSON.parse(await fs.promises.readFile(dispatch.dictionaryPath, "utf8"));
   return { ...prepared, ...validated, dispatch, dictionary };

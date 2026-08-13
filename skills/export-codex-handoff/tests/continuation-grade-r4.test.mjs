@@ -18,6 +18,7 @@ import {
   prepareCompressionTask,
   prepareFrameStage,
   prepareReduceStage,
+  scheduleNextMapWave,
   validateFrameStage,
 } from "../scripts/lib/task-workflow.mjs";
 import * as validation from "../scripts/lib/validation.mjs";
@@ -211,6 +212,7 @@ async function preparedAcceptedWorkflow(root) {
     anchors: frameInput.requiredFrameAnchors,
   });
   const validated = await validateFrameStage(prepared.workDir);
+  await scheduleNextMapWave(prepared.workDir, validated.mapDispatches.length);
   const dispatch = validated.mapDispatches[0];
   const dictionary = JSON.parse(await fs.promises.readFile(dispatch.dictionaryPath, "utf8"));
   const criticalIndex = dictionary.evidenceReferences.find(

@@ -110,8 +110,14 @@ test("MA0 core pre-dispatch fixture remains below the MA2 CLI capture facade", a
 
     const manifest = JSON.parse(await fs.promises.readFile(prepared.manifestPath, "utf8"));
     manifest.createdAt = "2026-08-12T00:00:00.000Z";
+    manifest.workflowDeadlineAt = "2026-08-12T00:10:00.000Z";
     manifest.frameValidatedAt = "2026-08-12T00:10:01.000Z";
     await writeJson(prepared.manifestPath, manifest);
+    const bindingPath = path.join(prepared.workDir, "workflow-version.json");
+    const binding = JSON.parse(await fs.promises.readFile(bindingPath, "utf8"));
+    binding.createdAt = manifest.createdAt;
+    binding.workflowDeadlineAt = manifest.workflowDeadlineAt;
+    await writeJson(bindingPath, binding);
 
     await assert.rejects(
       validateFrameStage(prepared.workDir),

@@ -158,8 +158,12 @@ async function prepareSchedulingWorkflow(root, { providerLatencyMs = 10_000 } = 
     mapResultMode: "continuation-map-v1",
   }, { buildEvidencePack: async () => syntheticEvidencePack() });
   const manifest = JSON.parse(await fs.promises.readFile(prepared.manifestPath, "utf8"));
-  manifest.createdAt = "2026-08-10T00:00:00.000Z";
-  manifest.frameValidatedAt = "2026-08-10T00:00:45.000Z";
+  manifest.createdAt = new Date(
+    Date.parse(manifest.workflowDeadlineAt) - 600_000,
+  ).toISOString();
+  manifest.frameValidatedAt = new Date(
+    Date.parse(manifest.createdAt) + 45_000,
+  ).toISOString();
   manifest.frameId = "frame-provider-timing-pt4";
   manifest.frameDigest = FRAME_DIGEST;
   manifest.turnAggregates = [];
@@ -170,6 +174,14 @@ async function prepareSchedulingWorkflow(root, { providerLatencyMs = 10_000 } = 
     stage: stage.stage,
     segmentId: stage.segmentId,
   }));
+  manifest.mapWaveAdmissions = [{
+    wave: 1,
+    availableSlots: FIRST_WAVE_SLOTS,
+    admittedAt: "2026-08-10T00:00:46.000Z",
+    segmentIds: manifest.segments
+      .slice(0, FIRST_WAVE_SLOTS)
+      .map((stage) => stage.segmentId),
+  }];
 
   const receiptTexts = new Map();
   for (let index = 0; index < FIRST_WAVE_SLOTS; index += 1) {
@@ -246,8 +258,7 @@ test("PT4 collects the exact first-wave samples and dispatches only within fresh
   const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "provider-timing-pt4-ready-"));
   try {
     const prepared = await prepareSchedulingWorkflow(root);
-    const manifestText = await fs.promises.readFile(prepared.manifestPath, "utf8");
-    const manifest = JSON.parse(manifestText);
+    const manifest = JSON.parse(await fs.promises.readFile(prepared.manifestPath, "utf8"));
     const scheduled = await scheduleNextMapWave(prepared.workDir, 1);
     assert.equal(scheduled.status, "ready");
     assert.equal(scheduled.availableSlots, 1);
@@ -264,7 +275,11 @@ test("PT4 collects the exact first-wave samples and dispatches only within fresh
     assert.equal(scheduled.projection.reduceMs, 60_000);
     assert.equal(scheduled.projection.publicationMs, 20_000);
     assert.equal(scheduled.projection.projectedTotalMs, 145_636);
-    assert.equal(await fs.promises.readFile(prepared.manifestPath, "utf8"), manifestText);
+    const admitted = JSON.parse(await fs.promises.readFile(prepared.manifestPath, "utf8"));
+    assert.equal(admitted.mapWaveAdmissions.length, 2);
+    assert.deepEqual(admitted.mapWaveAdmissions[1].segmentIds, [
+      manifest.segments[3].segmentId,
+    ]);
 
     const cli = await runProductionCli([
       "schedule-map",
@@ -273,7 +288,15 @@ test("PT4 collects the exact first-wave samples and dispatches only within fresh
     ]);
     assert.equal(cli.exitCode, 0);
     assert.equal(cli.stderr, "");
-    assert.deepEqual(JSON.parse(cli.stdout), scheduled);
+    assert.deepEqual(JSON.parse(cli.stdout), {
+      status: "awaiting-acceptance",
+      availableSlots: 1,
+      wave: 2,
+      dispatches: [],
+      activeDispatches: scheduled.dispatches,
+      pendingDispatches: 0,
+      acceptedDispatches: FIRST_WAVE_SLOTS,
+    });
   } finally {
     await fs.promises.rm(root, { recursive: true, force: true });
   }
@@ -327,52 +350,67 @@ test("PT4 maps missing, duplicate, and non-correlated first-wave samples to one 
   }
 });
 
-test("PT4 persists unreachable and unavailable scheduling failures without retry or publication", async () => {
-  for (const scenario of [
-    { slots: 1, providerLatencyMs: 260_000, code: "LIVE_BUDGET_UNREACHABLE" },
-    { slots: 0, providerLatencyMs: 10_000, code: "MAP_WORKER_UNAVAILABLE" },
-  ]) {
-    const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "provider-timing-pt4-fail-"));
-    try {
-      const prepared = await prepareSchedulingWorkflow(root, scenario);
-      const before = JSON.parse(await fs.promises.readFile(prepared.manifestPath, "utf8"));
-      await assert.rejects(
-        scheduleNextMapWave(prepared.workDir, scenario.slots),
-        { code: scenario.code },
-      );
-      const after = JSON.parse(await fs.promises.readFile(prepared.manifestPath, "utf8"));
-      assert.deepEqual(after, before);
-      assert.equal(after.segments[3].dispatch.attempt, 1);
-      assert.equal(after.segments[3].workerStatus, "pending");
+test("PT4 keeps over-target projection advisory and persists zero-capacity failure", async () => {
+  const projectionRoot = await fs.promises.mkdtemp(
+    path.join(os.tmpdir(), "provider-timing-pt4-projection-"),
+  );
+  try {
+    const prepared = await prepareSchedulingWorkflow(
+      projectionRoot,
+      { providerLatencyMs: 260_000 },
+    );
+    const scheduled = await scheduleNextMapWave(prepared.workDir, 1);
+    assert.equal(scheduled.status, "ready");
+    assert.equal(scheduled.projection.abort, true);
+    assert.ok(scheduled.projection.projectedTotalMs > 600_000);
+    assert.equal(scheduled.dispatches.length, 1);
+    await assert.rejects(
+      fs.promises.access(path.join(prepared.workDir, "failure-report.json")),
+      { code: "ENOENT" },
+    );
+  } finally {
+    await fs.promises.rm(projectionRoot, { recursive: true, force: true });
+  }
 
-      for (const [segmentId, receiptText] of prepared.receiptTexts) {
-        const stage = after.segments.find((item) => item.segmentId === segmentId);
-        assert.equal(await fs.promises.readFile(stage.receiptPath, "utf8"), receiptText);
-      }
-      await assert.rejects(fs.promises.access(prepared.outputPath), { code: "ENOENT" });
-      await assert.rejects(fs.promises.access(prepared.evidenceIndexPath), { code: "ENOENT" });
+  const capacityRoot = await fs.promises.mkdtemp(
+    path.join(os.tmpdir(), "provider-timing-pt4-capacity-"),
+  );
+  try {
+    const prepared = await prepareSchedulingWorkflow(capacityRoot);
+    const before = JSON.parse(await fs.promises.readFile(prepared.manifestPath, "utf8"));
+    await assert.rejects(
+      scheduleNextMapWave(prepared.workDir, 0),
+      { code: "MAP_WORKER_UNAVAILABLE" },
+    );
+    const after = JSON.parse(await fs.promises.readFile(prepared.manifestPath, "utf8"));
+    assert.deepEqual(after, before);
+    assert.equal(after.segments[3].dispatch.attempt, 1);
+    assert.equal(after.segments[3].workerStatus, "pending");
 
-      const report = JSON.parse(await fs.promises.readFile(
-        path.join(prepared.workDir, "failure-report.json"),
-        "utf8",
-      ));
-      assert.equal(report.phase, "schedule-map");
-      assert.equal(report.diagnostic.code, scenario.code);
-      assert.equal(report.workDir, prepared.workDir);
-      assert.equal(report.workerMetrics.acceptedMaps, FIRST_WAVE_SLOTS);
-      assert.deepEqual(Object.keys(report.performanceMetrics), [
-        "mapGeneration",
-        "checkAccept",
-        "reduce",
-        "publication",
-      ]);
-      assert.equal(report.performanceMetrics.mapGeneration.sampleCount, FIRST_WAVE_SLOTS);
-      if (scenario.code === "LIVE_BUDGET_UNREACHABLE") {
-        assert.ok(report.diagnostic.details.projection.projectedTotalMs > 600_000);
-      }
-    } finally {
-      await fs.promises.rm(root, { recursive: true, force: true });
+    for (const [segmentId, receiptText] of prepared.receiptTexts) {
+      const stage = after.segments.find((item) => item.segmentId === segmentId);
+      assert.equal(await fs.promises.readFile(stage.receiptPath, "utf8"), receiptText);
     }
+    await assert.rejects(fs.promises.access(prepared.outputPath), { code: "ENOENT" });
+    await assert.rejects(fs.promises.access(prepared.evidenceIndexPath), { code: "ENOENT" });
+
+    const report = JSON.parse(await fs.promises.readFile(
+      path.join(prepared.workDir, "failure-report.json"),
+      "utf8",
+    ));
+    assert.equal(report.phase, "schedule-map");
+    assert.equal(report.diagnostic.code, "MAP_WORKER_UNAVAILABLE");
+    assert.equal(report.workDir, prepared.workDir);
+    assert.equal(report.workerMetrics.acceptedMaps, FIRST_WAVE_SLOTS);
+    assert.deepEqual(Object.keys(report.performanceMetrics), [
+      "mapGeneration",
+      "checkAccept",
+      "reduce",
+      "publication",
+    ]);
+    assert.equal(report.performanceMetrics.mapGeneration.sampleCount, FIRST_WAVE_SLOTS);
+  } finally {
+    await fs.promises.rm(capacityRoot, { recursive: true, force: true });
   }
 });
 
@@ -389,7 +427,8 @@ test("PT4 leaves exact plan, architecture, and code-trail residue", async () => 
   assert.match(plan, /\*\*PT4 implementation evidence\*\*:/);
   assert.match(plan, /\*\*PT4 exact verification evidence\*\*:/);
   assert.match(architecture, /schedule-map <WORK_DIR> <AVAILABLE_SLOTS>/);
-  assert.match(architecture, /Each becomes one active Adjudication Request/);
+  assert.match(architecture, /Managed\s+failures become active Adjudication Requests/);
+  assert.match(architecture, /over-target provider projection remains advisory/);
   assert.match(codeTrail, /## 2026-08-10 Slice PT4 later-wave scheduling and terminal diagnostics/);
   for (const residue of [
     "task-workflow-core.mjs:scheduleNextMapWave",

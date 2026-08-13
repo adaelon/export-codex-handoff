@@ -118,7 +118,7 @@ test("PT0 synthetic fixture reproduces the production empty-sample boundary", as
   );
 });
 
-test("PT0 multi-wave admission rejects an unavailable Provider Timing Capability", async () => {
+test("PT0 multi-wave admission treats unavailable provider timing as optional telemetry", async () => {
   const { mapWorker } = await productionModules();
   const dispatches = createProviderTimingDispatches(mapWorker.createMapDispatch);
   const scheduled = mapWorker.scheduleMapDispatches(
@@ -130,13 +130,13 @@ test("PT0 multi-wave admission rejects an unavailable Provider Timing Capability
     },
   );
 
-  assert.deepEqual({
-    diagnosticCode: scheduled.diagnosticCode,
-    dispatchCount: scheduled.dispatches.length,
-  }, {
-    diagnosticCode: PROVIDER_TIMING_PT0_FIXTURE.diagnostics.unavailableCapability,
-    dispatchCount: 0,
-  });
+  assert.equal(scheduled.status, "ready");
+  assert.equal(scheduled.availableSlots, PROVIDER_TIMING_PT0_FIXTURE.freshSlots);
+  assert.deepEqual(scheduled.dispatches, dispatches.slice(
+    0,
+    PROVIDER_TIMING_PT0_FIXTURE.freshSlots,
+  ));
+  assert.equal(Object.hasOwn(scheduled, "projection"), false);
 });
 
 test("PT0 production CLI has no provider-observation argument on worker-side check", async () => {

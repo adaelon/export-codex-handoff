@@ -15,6 +15,7 @@ import {
   prepareCompressionTask,
   prepareFrameStage,
   recordMapGenerationMetric,
+  scheduleNextMapWave,
   validateFrameStage,
 } from "../scripts/lib/task-workflow.mjs";
 import {
@@ -218,7 +219,7 @@ function retentionCandidate(dispatch, dictionary, frame) {
   };
 }
 
-async function prepareWorkflow(root) {
+async function prepareWorkflow(root, admissionSlotsOverride = null) {
   const rolloutPath = path.join(root, "synthetic-targeted-map-repair.jsonl");
   await fs.promises.writeFile(
     rolloutPath,
@@ -248,6 +249,12 @@ async function prepareWorkflow(root) {
     anchors: frameInput.requiredFrameAnchors,
   });
   const validated = await validateFrameStage(prepared.workDir);
+  const admissionSlots = admissionSlotsOverride ?? validated.mapDispatches.length;
+  const scheduled = await scheduleNextMapWave(prepared.workDir, admissionSlots);
+  assert.deepEqual(
+    scheduled.dispatches,
+    validated.mapDispatches.slice(0, admissionSlots),
+  );
   const targetSegment = validated.segments.find(
     (candidate) => candidate.stage === "progress_map",
   );
@@ -284,6 +291,7 @@ async function prepareWorkflow(root) {
     validated,
     targetDispatch,
     unrelatedDispatch,
+    admissionSlots,
     invalidCandidate,
     correctedCandidate: correctedProgressCandidate(invalidCandidate),
   };
@@ -300,7 +308,13 @@ function serializedObservation(stage) {
 }
 
 async function retainUnrelatedMap(workflow) {
-  const { prepared, validated, targetDispatch, unrelatedDispatch } = workflow;
+  const {
+    prepared,
+    validated,
+    targetDispatch,
+    unrelatedDispatch,
+    admissionSlots,
+  } = workflow;
   const dictionary = await readJson(unrelatedDispatch.dictionaryPath);
   await claimMapDispatch(
     prepared.workDir,
@@ -329,6 +343,7 @@ async function retainUnrelatedMap(workflow) {
   );
   const observation = createMapGenerationObservation(unrelatedDispatch, {
     providerObservationId: `provider-observation-${unrelatedDispatch.segmentId}`,
+    availableSlots: admissionSlots,
   });
   await recordMapGenerationMetric(
     prepared.workDir,
@@ -366,6 +381,31 @@ async function assertUnrelatedMapUnchanged(workflow, retained) {
   assert.equal(stage.mapGenerationMetric.receiptDigest, retained.receiptDigest);
   assert.equal(serializedObservation(stage), retained.providerObservationBytes);
 }
+
+test("TR2 claim rejects a dispatch outside the current durable MAP wave", async () => {
+  const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "codex-map-repair-tr2-admission-"));
+  try {
+    const workflow = await prepareWorkflow(root, 1);
+    const [admittedDispatch, unadmittedDispatch] = workflow.validated.mapDispatches;
+    await claimMapDispatch(
+      workflow.prepared.workDir,
+      admittedDispatch.segmentId,
+      admittedDispatch.dispatchId,
+      "worker-current-admission",
+    );
+    await assert.rejects(
+      claimMapDispatch(
+        workflow.prepared.workDir,
+        unadmittedDispatch.segmentId,
+        unadmittedDispatch.dispatchId,
+        "worker-outside-admission",
+      ),
+      { code: "MAP_DISPATCH_NOT_ADMITTED" },
+    );
+  } finally {
+    await fs.promises.rm(root, { recursive: true, force: true });
+  }
+});
 
 test("TR2 repairs the current MAP attempt after a non-consuming check", async () => {
   const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "codex-map-repair-tr2-check-"));

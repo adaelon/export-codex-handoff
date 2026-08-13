@@ -14,6 +14,7 @@ import {
   prepareCompressionTask,
   prepareFrameStage,
   prepareReduceStage,
+  scheduleNextMapWave,
   validateFrameStage,
   validateMapStage,
 } from "../scripts/lib/task-workflow.mjs";
@@ -133,6 +134,7 @@ async function prepare(root, { legacy = false, maxAggregateMapOutputChars } = {}
     anchors: frameInput.requiredFrameAnchors,
   });
   const binding = await validateFrameStage(prepared.workDir);
+  await scheduleNextMapWave(prepared.workDir, binding.mapDispatches.length);
   return {
     ...prepared,
     ...binding,
