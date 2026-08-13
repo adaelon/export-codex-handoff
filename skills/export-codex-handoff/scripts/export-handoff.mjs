@@ -491,7 +491,7 @@ async function main() {
           parseError,
           {
             artifactKind: "cli_arguments",
-            allowedActions: ["retry_stage", "publish_degraded"],
+            allowedActions: ["repair_stage", "regenerate_stage"],
           },
         );
       } catch (captureError) {

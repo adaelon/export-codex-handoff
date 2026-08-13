@@ -281,16 +281,15 @@ test("TR1 returns one bounded diagnostic for every MAP-owned candidate issue", a
     assert.equal(completeError.details.repairScope, "map_candidate");
     assert.equal(completeError.details.segmentId, dispatch.segmentId);
     assert.equal(completeError.details.receipt.diagnosticCode, "MAP_REPAIR_REQUIRED");
-    assert.equal(completeError.details.nextDispatch.segmentId, dispatch.segmentId);
-    assert.equal(completeError.details.nextDispatch.attempt, 2);
-    assert.notEqual(completeError.details.nextDispatch.dispatchId, dispatch.dispatchId);
+    assert.equal(Object.hasOwn(completeError.details, "nextDispatch"), false);
 
     const manifestAfterComplete = await readJson(prepared.manifestPath);
     const repairedSegment = manifestAfterComplete.segments.find(
       (item) => item.segmentId === dispatch.segmentId,
     );
-    assert.equal(repairedSegment.dispatch.attempt, 2);
-    assert.equal(repairedSegment.workerStatus, "pending");
+    assert.equal(repairedSegment.dispatch.attempt, 1);
+    assert.equal(repairedSegment.dispatch.dispatchId, dispatch.dispatchId);
+    assert.equal(repairedSegment.workerStatus, "failed");
     assert.deepEqual(
       manifestAfterComplete.segments
         .filter((item) => item.segmentId !== dispatch.segmentId)

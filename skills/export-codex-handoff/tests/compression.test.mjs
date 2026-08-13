@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 
 import {
+  inspectAdjudication,
   prepareCompressionTask,
   prepareFrameStage,
   prepareReduceStage,
@@ -390,6 +391,38 @@ test("validates staged summaries and atomically publishes a Handoff", async () =
     assert.equal(result.cleanupStatus, "removed");
     await assert.rejects(fs.promises.access(prepared.workDir));
     await assert.rejects(prepare(root), { code: "OUTPUT_EXISTS" });
+  } finally {
+    await fs.promises.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("normal verified publication is the only durable PUBLISHED transition", async () => {
+  const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "codex-handoff-terminal-"));
+  try {
+    const prepared = await prepare(root);
+    await writeAllMaps(prepared);
+    for (const segment of prepared.segments) {
+      await validateMapStage(prepared.workDir, segment.segmentId);
+    }
+    const reduce = await prepareReduceStage(prepared.workDir);
+    await writeJson(reduce.reducedPath, reduceResult(TURN_IDS, prepared));
+    const result = await publishHandoff(
+      prepared.workDir,
+      { keepWorkdir: true },
+      { verifyEvidenceIndex: async () => ({ valid: true }) },
+    );
+
+    const state = await inspectAdjudication(prepared.workDir);
+    assert.equal(state.lifecycleState, "PUBLISHED");
+    assert.equal(state.activeRequest, null);
+    assert.equal(state.publication.publicationType, "normal_handoff");
+    assert.equal(state.publication.evidenceVerified, true);
+    assert.equal(state.publication.outputPath, result.outputPath);
+    assert.equal(state.publication.evidenceIndexPath, result.evidenceIndexPath);
+    assert.equal(state.publication.handoffDigest, result.handoffDigest);
+    assert.equal(state.publication.evidenceIndexDigest, result.evidenceIndexDigest);
+    assert.equal(state.publication.structuralDigest, result.structuralDigest);
+    assert.equal(state.eventChain.eventCount, 1);
   } finally {
     await fs.promises.rm(root, { recursive: true, force: true });
   }

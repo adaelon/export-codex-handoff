@@ -373,7 +373,7 @@ test("receipt validation rejects wrong identity and oversized diagnostics", () =
   );
 });
 
-test("two failed attempts trip the per-segment circuit breaker and retain diagnostics", async () => {
+test("failed MAP completion never creates a Worker retry before Main Codex adjudication", async () => {
   const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "codex-map-breaker-"));
   try {
     const prepared = await prepare(root);
@@ -401,27 +401,30 @@ test("two failed attempts trip the per-segment circuit breaker and retain diagno
       () => false,
     ), false);
 
-    const manifest = JSON.parse(await fs.promises.readFile(prepared.manifestPath, "utf8"));
-    const retry = manifest.segments[0].dispatch;
-    assert.equal(retry.attempt, 2);
-    await claimMapDispatch(
-      prepared.workDir,
-      retry.segmentId,
-      retry.dispatchId,
-      "worker-b",
-    );
-    await writeJson(retry.summaryPath, {
-      ...validMap({ ...prepared, dispatch: retry }),
+    let manifest = JSON.parse(await fs.promises.readFile(prepared.manifestPath, "utf8"));
+    const retainedDispatch = manifest.segments[0].dispatch;
+    assert.equal(retainedDispatch.attempt, 1);
+    assert.equal(retainedDispatch.dispatchId, prepared.dispatch.dispatchId);
+    assert.equal(manifest.segments[0].workerStatus, "failed");
+    await writeJson(retainedDispatch.summaryPath, {
+      ...validMap({ ...prepared, dispatch: retainedDispatch }),
       segmentId: "wrong-segment",
     });
     await assert.rejects(
-      completeMapDispatch(prepared.workDir, retry.segmentId, retry.dispatchId),
-      { code: "MAP_WORKER_EXHAUSTED" },
+      completeMapDispatch(
+        prepared.workDir,
+        retainedDispatch.segmentId,
+        retainedDispatch.dispatchId,
+      ),
+      { code: "SEGMENT_ID_MISMATCH" },
     );
     await assert.rejects(
       prepareReduceStage(prepared.workDir),
-      { code: "MAP_WORKER_EXHAUSTED" },
+      { code: "SEGMENT_ID_MISMATCH" },
     );
+    manifest = JSON.parse(await fs.promises.readFile(prepared.manifestPath, "utf8"));
+    assert.equal(manifest.segments[0].dispatch.dispatchId, prepared.dispatch.dispatchId);
+    assert.equal(manifest.segments[0].workerStatus, "failed");
     const diagnostics = await fs.promises.readdir(manifest.segments[0].diagnosticsDir);
     assert.equal(diagnostics.filter((name) => name.endsWith(".receipt.json")).length, 2);
   } finally {

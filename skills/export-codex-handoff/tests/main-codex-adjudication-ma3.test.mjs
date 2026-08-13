@@ -324,7 +324,7 @@ async function submitDecision(prepared, request, action) {
   });
 }
 
-test("MA3 retry_stage apply resumes only validate-reduce and replays with zero writes", async () => {
+test("MA3 repair_stage apply resumes only validate-reduce and replays with zero writes", async () => {
   const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "codex-ma3-retry-"));
   try {
     const prepared = await prepareWorkflow(root);
@@ -339,8 +339,8 @@ test("MA3 retry_stage apply resumes only validate-reduce and replays with zero w
         kind: "reduce_candidate",
         coordinates: { command: "validate-reduce", candidate: "reduced.json" },
       },
-      allowedActions: ["retry_stage", "regenerate_stage", "publish_degraded"],
-    }, { type: "retry_stage", phase: "validate-reduce" });
+      allowedActions: ["repair_stage", "regenerate_stage"],
+    }, { type: "repair_stage", phase: "validate-reduce" });
     assert.equal(applying.lifecycleState, "APPLYING_ADJUDICATION");
     await fs.promises.rm(
       path.join(prepared.workDir, "adjudication", "applications"),
@@ -361,7 +361,7 @@ test("MA3 retry_stage apply resumes only validate-reduce and replays with zero w
       command: ["validate-reduce", prepared.workDir, "--check"],
     });
     assert.equal(applied.activeRequest.status, "APPLIED");
-    assert.equal(applied.application.result.effect, "stage_resumed");
+    assert.equal(applied.application.result.effect, "directed_repair_applied");
     assert.equal(applied.applications.length, 1);
     assert.equal(applied.application.status, "APPLIED");
     assert.equal(
@@ -384,7 +384,7 @@ test("MA3 retry_stage apply resumes only validate-reduce and replays with zero w
   }
 });
 
-test("MA3 retry_stage restores the command contract for every retryable named phase", async (t) => {
+test("MA3 repair_stage restores the command contract for every repairable named phase", async (t) => {
   const cases = [
     { phase: "prepare-frame", coordinates: {}, suffix: ["prepare-frame"] },
     { phase: "validate-frame", coordinates: {}, suffix: ["validate-frame"] },
@@ -470,8 +470,8 @@ test("MA3 retry_stage restores the command contract for every retryable named ph
             kind: "phase-input",
             coordinates: phaseCase.coordinates,
           },
-          allowedActions: ["retry_stage", "publish_degraded"],
-        }, { type: "retry_stage", phase: phaseCase.phase });
+          allowedActions: ["repair_stage", "regenerate_stage"],
+        }, { type: "repair_stage", phase: phaseCase.phase });
 
         const applied = runCli(["adjudicate", prepared.workDir, "--apply"]);
         assert.equal(applied.status, 0, applied.stderr);
@@ -509,7 +509,7 @@ test("MA3 regenerate_stage archives the REDUCE generation before resuming its au
         kind: "reduce-result",
         coordinates: { candidatePath: prepared.reducedPath },
       },
-      allowedActions: ["retry_stage", "regenerate_stage", "publish_degraded"],
+      allowedActions: ["repair_stage", "regenerate_stage"],
     }, { type: "regenerate_stage", phase: "validate-reduce" });
 
     const applied = runCli(["adjudicate", prepared.workDir, "--apply"]);
@@ -552,7 +552,7 @@ test("MA3 prepare-frame regeneration clears the stale input binding before exact
         kind: "compression-frame-input",
         coordinates: { candidatePath: prepared.frameInputPath },
       },
-      allowedActions: ["retry_stage", "regenerate_stage", "publish_degraded"],
+      allowedActions: ["repair_stage", "regenerate_stage"],
     }, { type: "regenerate_stage", phase: "prepare-frame" });
 
     const applied = runCli(["adjudicate", prepared.workDir, "--apply"]);
@@ -599,7 +599,7 @@ test("MA3 provider-observation regeneration preserves the accepted MAP generatio
         acceptedMaps: manifest.segments.length,
         acceptedReceipts: manifest.segments.length,
       },
-      allowedActions: ["retry_stage", "regenerate_stage", "publish_degraded"],
+      allowedActions: ["repair_stage", "regenerate_stage"],
     }, { type: "regenerate_stage", phase: "record-map-metric" });
 
     const applied = runCli(["adjudicate", workflow.prepared.workDir, "--apply"]);
@@ -657,7 +657,7 @@ test("MA3 accepted MAP regeneration supersedes only its generation and REDUCE re
         acceptedMaps: before.segments.length,
         acceptedReceipts: before.segments.length,
       },
-      allowedActions: ["regenerate_stage", "publish_degraded"],
+      allowedActions: ["repair_stage", "regenerate_stage"],
     }, { type: "regenerate_stage", phase: "validate-map-accept" });
 
     const applied = runCli(["adjudicate", workflow.prepared.workDir, "--apply"]);
@@ -748,7 +748,7 @@ test("MA3 MAP regeneration fails closed when the bound accepted receipt changed"
         acceptedMaps: before.segments.length,
         acceptedReceipts: before.segments.length,
       },
-      allowedActions: ["regenerate_stage", "publish_degraded"],
+      allowedActions: ["repair_stage", "regenerate_stage"],
     }, { type: "regenerate_stage", phase: "validate-map-accept" });
     await fs.promises.writeFile(
       target.receiptPath,
@@ -799,7 +799,7 @@ test("MA3 relocate_publication rebinds a fresh pair without mutating its immutab
           evidenceIndexPath: prepared.evidenceIndexPath,
         },
       },
-      allowedActions: ["retry_stage", "relocate_publication", "publish_degraded"],
+      allowedActions: ["repair_stage", "regenerate_stage", "relocate_publication"],
     }, {
       type: "relocate_publication",
       outputPath,
@@ -855,7 +855,7 @@ test("MA3 relocation rejects targets inside the disposable work directory", asyn
           evidenceIndexPath: prepared.evidenceIndexPath,
         },
       },
-      allowedActions: ["retry_stage", "relocate_publication", "publish_degraded"],
+      allowedActions: ["repair_stage", "regenerate_stage", "relocate_publication"],
     }, {
       type: "relocate_publication",
       outputPath,
@@ -896,7 +896,7 @@ test("MA3 relocation TOCTOU failure closes the predecessor and opens one linked 
           evidenceIndexPath: prepared.evidenceIndexPath,
         },
       },
-      allowedActions: ["retry_stage", "relocate_publication", "publish_degraded"],
+      allowedActions: ["repair_stage", "regenerate_stage", "relocate_publication"],
     }, {
       type: "relocate_publication",
       outputPath,
@@ -923,7 +923,7 @@ test("MA3 relocation TOCTOU failure closes the predecessor and opens one linked 
     assert.equal(failed.activeRequest.request.phase, "publish");
     assert.deepEqual(
       failed.activeRequest.request.allowedActions,
-      ["retry_stage", "relocate_publication", "publish_degraded"],
+      ["repair_stage", "regenerate_stage", "relocate_publication"],
     );
     assert.equal(
       await fs.promises.readFile(outputPath, "utf8"),
@@ -950,8 +950,8 @@ test("MA3 repeat apply never replays an older success after a newer application 
         kind: "reduce-result",
         coordinates: { command: "validate-reduce" },
       },
-      allowedActions: ["retry_stage", "regenerate_stage", "publish_degraded"],
-    }, { type: "retry_stage", phase: "validate-reduce" });
+      allowedActions: ["repair_stage", "regenerate_stage"],
+    }, { type: "repair_stage", phase: "validate-reduce" });
     assert.equal(
       runCli(["adjudicate", prepared.workDir, "--apply"]).status,
       0,
@@ -973,7 +973,7 @@ test("MA3 repeat apply never replays an older success after a newer application 
           evidenceIndexPath: prepared.evidenceIndexPath,
         },
       },
-      allowedActions: ["retry_stage", "relocate_publication", "publish_degraded"],
+      allowedActions: ["repair_stage", "regenerate_stage", "relocate_publication"],
     }, {
       type: "relocate_publication",
       outputPath,

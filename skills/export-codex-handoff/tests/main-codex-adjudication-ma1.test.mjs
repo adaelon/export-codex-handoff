@@ -106,21 +106,20 @@ function boundedRequest(overrides = {}) {
       acceptedReceipts: 0,
     },
     allowedActions: [
-      "retry_stage",
+      "repair_stage",
       "regenerate_stage",
-      "publish_degraded",
     ],
     ...overrides,
   };
 }
 
-function retryDecision(state, overrides = {}) {
+function repairDecision(state, overrides = {}) {
   return {
     runId: state.runId,
     requestId: state.activeRequest.requestId,
     requestDigest: state.activeRequest.requestDigest,
     action: {
-      type: "retry_stage",
+      type: "repair_stage",
       phase: state.activeRequest.request.phase,
     },
     rationale: "Main Codex corrected the bounded pre-dispatch input.",
@@ -179,7 +178,7 @@ async function createApplyingRequest(prepared) {
   );
   return submitAdjudicationDecision(
     prepared.workDir,
-    retryDecision(awaiting),
+    repairDecision(awaiting),
   );
 }
 
@@ -324,21 +323,21 @@ test("MA1 decisions bind the exact active request and invalid submissions change
 
     const invalidCases = [
       {
-        input: retryDecision(awaiting, {
+        input: repairDecision(awaiting, {
           runId: `adjudication-run-${"e".repeat(64)}`,
         }),
         code: "ADJUDICATION_DECISION_BINDING_MISMATCH",
       },
       {
-        input: retryDecision(awaiting, { requestDigest: `sha256:${"d".repeat(64)}` }),
+        input: repairDecision(awaiting, { requestDigest: `sha256:${"d".repeat(64)}` }),
         code: "ADJUDICATION_DECISION_BINDING_MISMATCH",
       },
       {
-        input: retryDecision(awaiting, { requestId: "adjudication-request-stale" }),
+        input: repairDecision(awaiting, { requestId: "adjudication-request-stale" }),
         code: "ADJUDICATION_DECISION_BINDING_MISMATCH",
       },
       {
-        input: retryDecision(awaiting, {
+        input: repairDecision(awaiting, {
           action: {
             type: "relocate_publication",
             outputPath: path.join(root, "relocated.md"),
@@ -348,11 +347,11 @@ test("MA1 decisions bind the exact active request and invalid submissions change
         code: "ADJUDICATION_ACTION_NOT_ALLOWED",
       },
       {
-        input: retryDecision(awaiting, {
+        input: repairDecision(awaiting, {
           action: {
-            type: "retry_stage",
+            type: "repair_stage",
             phase: "pre-dispatch",
-            also: "publish_degraded",
+            also: "regenerate_stage",
           },
         }),
         code: "INVALID_ADJUDICATION_DECISION",
@@ -374,7 +373,7 @@ test("MA1 decisions bind the exact active request and invalid submissions change
     const decisionPath = path.join(root, "decision.json");
     await fs.promises.writeFile(
       decisionPath,
-      `${JSON.stringify(retryDecision(awaiting), null, 2)}\n`,
+      `${JSON.stringify(repairDecision(awaiting), null, 2)}\n`,
       "utf8",
     );
     const submitted = runCli([
@@ -388,7 +387,7 @@ test("MA1 decisions bind the exact active request and invalid submissions change
     assert.equal(applying.lifecycleState, "APPLYING_ADJUDICATION");
     assert.equal(applying.activeRequest.requestId, awaiting.activeRequest.requestId);
     assert.equal(applying.activeRequest.status, "APPLYING_ADJUDICATION");
-    assert.equal(applying.activeRequest.decision.action.type, "retry_stage");
+    assert.equal(applying.activeRequest.decision.action.type, "repair_stage");
     assert.deepEqual(applying.requests.map((entry) => ({
       requestId: entry.requestId,
       status: entry.status,
@@ -403,7 +402,7 @@ test("MA1 decisions bind the exact active request and invalid submissions change
 
     const afterValid = await directorySnapshot(adjudicationDir);
     await assert.rejects(
-      submitAdjudicationDecision(prepared.workDir, retryDecision(awaiting)),
+      submitAdjudicationDecision(prepared.workDir, repairDecision(awaiting)),
       { code: "ADJUDICATION_REQUEST_NOT_AWAITING" },
     );
     assert.deepEqual(await directorySnapshot(adjudicationDir), afterValid);

@@ -14,12 +14,12 @@ Use the invoking Codex task as the dedicated Compression Task. Keep it separate 
 3. Require one Source Thread UUID. Ask only when it is missing.
 4. Use a user-supplied output path; otherwise publish `handoff-<UUID>.md` and `handoff-<UUID>.evidence.json` in the current directory.
 
-## Main Codex adjudication loop
+## Main Codex Convergence
 
 After `prepare` returns a durable `workDir`, a Captured Workflow Diagnostic is a resumable state,
 not a terminal export result. Main Codex owns every Adjudication Decision and must never ask the user to adjudicate an internal workflow diagnostic. Continue the same Compression Run until a
-normal Handoff pair publishes or an exact `publish_degraded` decision publishes a Degraded Handoff
-pair. Never start a clean Compression Run as recovery.
+verified normal Handoff pair publishes. Never start a clean Compression Run as recovery, and never
+turn an unresolved workflow diagnostic into a terminal publication.
 
 Use this loop around every managed command after `prepare`:
 
@@ -68,14 +68,11 @@ outside the managed scheduling command. Every managed command failure already re
 
 Choose the decision from evidence, not from a fixed retry order:
 
-- `retry_stage`: only after correcting the named mutable input/candidate without changing accepted
+- `repair_stage`: only after correcting the named mutable input/candidate without changing accepted
   evidence; resume only `applied.result.resume.command`.
 - `regenerate_stage`: only when the request identifies the responsible authored generation and the
   immutable contract permits supersession.
 - `relocate_publication`: only for a publication-path defect and only to a fresh absent pair.
-- `publish_degraded`: choose `publish_degraded` whenever reliable repair cannot be proven, the same
-  phase/code repeats without new corrective evidence, an attempt is exhausted, or required
-  capacity/timing remains unavailable.
 
 Do not repeat the same repair or regeneration for the same phase/code unless new evidence identifies
 a different bounded correction. Invalid decisions leave the request active; failed applications
@@ -194,7 +191,7 @@ Resolve `<skill-dir>` to this skill folder. Run helper commands yourself; do not
      ```
 
      If it reports `MAP_REPAIR_REQUIRED`, the managed CLI captures the exact ordered `details.issues[]` unchanged
-     in the active Adjudication Request. Inspect it, choose `retry_stage` only when
+     in the active Adjudication Request. Inspect it, choose `repair_stage` only when
      every named correction preserves evidence semantics, submit and apply that decision, then pass
      the issue list unchanged to the responsible Worker before running `resume.command` on the same dispatch.
      Never replace the issue list with generic retry guidance. Never start a clean
@@ -213,13 +210,12 @@ Resolve `<skill-dir>` to this skill folder. Run helper commands yourself; do not
      node <skill-dir>/scripts/export-handoff.mjs validate-map <workDir> <segmentId> --accept <dispatchId>
      ```
 
-     When completion reports `MAP_REPAIR_REQUIRED`, dispatch the returned attempt-2 `nextDispatch`
-     to a fresh isolated Worker and pass the exact ordered `details.issues[]` unchanged alongside
-     it. Repair only that dispatch's private candidate; do not reopen accepted receipts or other
-     segments. For any other first failure that returns a `nextDispatch`, pass that dispatch and its
-     bounded diagnostic unchanged to a fresh isolated Worker. `MAP_WORKER_EXHAUSTED` is captured by
-     the managed completion command; inspect it and choose a different lawful correction or explicit
-     degradation instead of terminating the Compression Run.
+     When completion reports `MAP_REPAIR_REQUIRED`, the managed CLI freezes the current candidate,
+     retains the exact ordered `details.issues[]`, and opens an Adjudication Request without creating
+     `nextDispatch`. Main Codex chooses `repair_stage` to direct the responsible Worker back to the
+     same dispatch, or `regenerate_stage` to supersede only the responsible generation. Never let the
+     coordinator read or repair the private candidate, and never reopen accepted receipts or unrelated
+     segments.
    - Provider timing is optional telemetry and never controls admission. When the execution surface
      exposes provider-reported post-worker observations for every dispatch in the admitted waves,
      write each strict nine-field `MapGenerationObservation` through the separate bounded ingress:
@@ -266,10 +262,10 @@ Resolve `<skill-dir>` to this skill folder. Run helper commands yourself; do not
    ```
 
    Treat a deterministic diagnostic reported here as REDUCE-owned. After Main Codex applies
-   `retry_stage`, rewrite only `reducedPath` and rerun the `validate-reduce` preflight without
+   `repair_stage`, rewrite only `reducedPath` and rerun the `validate-reduce` preflight without
    changing accepted Claims. The managed CLI captures the diagnostic; inspect the request and
-   select `retry_stage` only when that correction is bounded to `reducedPath`, then run its exact
-   `resume.command`. A REDUCE-owned failure must not create a MAP attempt-2 dispatch or replay a MAP Worker,
+   select `repair_stage` only when that correction is bounded to `reducedPath`, then run its exact
+   `resume.command`. A REDUCE-owned failure must not create a MAP dispatch or replay a MAP Worker,
    and it never starts a clean Compression Run. For
    `continuation-map-v2`, the check also enforces task-profile Actionability and deterministic Hot
    Context reachability, returning `HANDOFF_NOT_ACTIONABLE` or `HANDOFF_LOW_VALUE` before digest
@@ -291,11 +287,12 @@ Resolve `<skill-dir>` to this skill folder. Run helper commands yourself; do not
    before either public file appears. It creates the Handoff and Evidence Index as one exclusive
    transaction; a second-file failure rolls back only the first file from that attempt. Every
    publication diagnostic enters the Main Codex adjudication loop. For `OUTPUT_TOO_LARGE`, choose
-   `retry_stage` only when removing bounded narrative from `reducedPath` preserves every
-   continuation-critical fact; otherwise choose `publish_degraded`. Use `relocate_publication` only
-   for fresh absent targets. An immutable Evidence Index budget, repeated publication diagnostic, or
-   unproven correction requires explicit degradation rather than a clean run. Never present a partial
-   Handoff as success. Existing v1 work directories stay on their legacy path and are never upgraded.
+   `repair_stage` only when removing bounded narrative from `reducedPath` preserves every
+   continuation-critical fact; choose `regenerate_stage` only when the responsible authored generation
+   can be safely superseded. Use `relocate_publication` only for fresh absent targets. If no bounded
+   correction is proven, keep the diagnostic active and inspect its linked successor; never turn an
+   immutable budget failure or repeated publication diagnostic into a partial success. Existing v1 work
+   directories stay on their legacy path and are never upgraded.
 
 9. Verify the published Evidence Index after every successful publication:
 

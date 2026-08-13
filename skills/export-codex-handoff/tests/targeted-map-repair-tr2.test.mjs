@@ -462,7 +462,7 @@ test("TR2 repairs the current MAP attempt after a non-consuming check", async ()
   }
 });
 
-test("TR2 repairs only the failed segment through its attempt-2 dispatch", async () => {
+test("TR2 repairs only the failed segment after Main Codex retains its dispatch", async () => {
   const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "codex-map-repair-tr2-retry-"));
   try {
     const workflow = await prepareWorkflow(root);
@@ -484,43 +484,42 @@ test("TR2 repairs only the failed segment through its attempt-2 dispatch", async
     assert.equal(completeError.code, "MAP_REPAIR_REQUIRED");
     assert.deepEqual(completeError.details.issues, EXPECTED_ISSUES);
     assert.equal(completeError.details.receipt.diagnosticCode, "MAP_REPAIR_REQUIRED");
-    const retry = completeError.details.nextDispatch;
-    assert.equal(retry.segmentId, targetDispatch.segmentId);
-    assert.equal(retry.attempt, 2);
-    assert.notEqual(retry.dispatchId, targetDispatch.dispatchId);
-
-    await claimMapDispatch(
-      prepared.workDir,
-      retry.segmentId,
-      retry.dispatchId,
-      "worker-targeted-map-repair-tr2-attempt-2",
+    assert.equal(Object.hasOwn(completeError.details, "nextDispatch"), false);
+    let manifest = await readJson(prepared.manifestPath);
+    let repaired = manifest.segments.find(
+      (segment) => segment.segmentId === targetDispatch.segmentId,
     );
-    await writeJson(retry.summaryPath, correctedCandidate);
+    assert.equal(repaired.dispatch.dispatchId, targetDispatch.dispatchId);
+    assert.equal(repaired.dispatch.attempt, 1);
+    assert.equal(repaired.workerStatus, "failed");
+
+    await writeJson(targetDispatch.summaryPath, correctedCandidate);
     const checked = await checkMapDispatch(
       prepared.workDir,
-      retry.segmentId,
-      retry.dispatchId,
+      targetDispatch.segmentId,
+      targetDispatch.dispatchId,
     );
     assert.equal(checked.valid, true);
-    assert.equal(checked.dispatchId, retry.dispatchId);
+    assert.equal(checked.dispatchId, targetDispatch.dispatchId);
     const receipt = await completeMapDispatch(
       prepared.workDir,
-      retry.segmentId,
-      retry.dispatchId,
+      targetDispatch.segmentId,
+      targetDispatch.dispatchId,
     );
     assert.equal(receipt.status, "validated");
-    assert.equal(receipt.dispatchId, retry.dispatchId);
+    assert.equal(receipt.dispatchId, targetDispatch.dispatchId);
     await acceptMapReceipt(
       prepared.workDir,
-      retry.segmentId,
-      retry.dispatchId,
+      targetDispatch.segmentId,
+      targetDispatch.dispatchId,
     );
 
-    const manifest = await readJson(prepared.manifestPath);
-    const repaired = manifest.segments.find(
-      (segment) => segment.segmentId === retry.segmentId,
+    manifest = await readJson(prepared.manifestPath);
+    repaired = manifest.segments.find(
+      (segment) => segment.segmentId === targetDispatch.segmentId,
     );
-    assert.equal(repaired.dispatch.attempt, 2);
+    assert.equal(repaired.dispatch.attempt, 1);
+    assert.equal(repaired.dispatch.dispatchId, targetDispatch.dispatchId);
     assert.equal(repaired.workerStatus, "validated");
     assert.equal(repaired.lastDiagnosticCode, undefined);
     await assertUnrelatedMapUnchanged(workflow, retained);

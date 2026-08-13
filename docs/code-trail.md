@@ -845,3 +845,15 @@
 
 **Entry point**: Run `schedule-map <WORK_DIR> <AVAILABLE_SLOTS>`, then claim only a dispatch returned by that admission; compatibility `validateMapStage` routes serially through the same scheduler.
 **Test**: Claim/deadline/TR2/TR6 focused tests pass 8/8; the complete suite passes 256/256 with zero skips; installed-Skill parity acceptance passes 15/15 across 88 byte-identical files; `git diff --check` passes.
+
+## 2026-08-13 Slice MAP completion freeze-before-adjudication
+
+**Touched**:
+- `skills/export-codex-handoff/scripts/lib/task-workflow-core.mjs:recordMapFailure / completeMapDispatch` — archives each failed candidate diagnostic under a unique name, keeps the current dispatch, marks it failed, and returns no automatic `nextDispatch`.
+- `skills/export-codex-handoff/scripts/lib/adjudication.mjs:ADJUDICATION_PHASE_POLICIES / normal publication receipt` and `adjudication-actions.mjs:executeAdjudicationAction` — expose `repair_stage` or `regenerate_stage` convergence and reserve `PUBLISHED` for a verified normal publication pair.
+- `skills/export-codex-handoff/tests/targeted-map-repair-tr2.test.mjs` and `targeted-map-repair-tr3.test.mjs` — lock same-dispatch repair, exact issue handback, no automatic attempt-2, and REDUCE/MAP ownership isolation.
+- `skills/export-codex-handoff/tests/main-codex-adjudication-ma2.test.mjs`, `main-codex-adjudication-ma3.test.mjs`, and `main-codex-convergence-mc0.test.mjs` — cover completion capture, directed repair, generation-local supersession, latest-generation REDUCE input, and the no-degraded-publication boundary.
+- `skills/export-codex-handoff/SKILL.md`, `references/continuation-map-v2-worker-contract.md`, and `docs/architecture.md` — route completion failure through Main Codex Convergence and remove the stale automatic attempt-2/degraded terminal contract.
+
+**Entry point**: When `validate-map --complete` returns a captured diagnostic, inspect the active request; apply `repair_stage` to resume the same dispatch or `regenerate_stage` to supersede only the responsible generation.
+**Test**: MA2/MA3/TR2 focused tests pass 45/45; MA5/MC0 pass 8/8; TR3 passes 3/3; the complete Node suite passes 252/252 with zero skips.

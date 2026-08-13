@@ -5,7 +5,6 @@ import path from "node:path";
 import { canonicalStringify, sha256Text } from "./evidence-addressing.mjs";
 import { createMapDispatch } from "./map-worker.mjs";
 import { ExportHandoffError } from "./source-thread.mjs";
-import { publishDegradedHandoff } from "./task-workflow-core.mjs";
 
 const MANIFEST_FILE = "manifest.json";
 
@@ -470,9 +469,9 @@ async function relocatePublication(workDir, contract, request, decision) {
 
 export async function executeAdjudicationAction({ workDir, contract, request, decision }) {
   const resolved = path.resolve(workDir);
-  if (decision.action.type === "retry_stage") {
+  if (decision.action.type === "repair_stage") {
     return {
-      effect: "stage_resumed",
+      effect: "directed_repair_applied",
       resume: resumeForPhase(request.phase, resolved, request.artifact.coordinates),
     };
   }
@@ -482,10 +481,8 @@ export async function executeAdjudicationAction({ workDir, contract, request, de
   if (decision.action.type === "relocate_publication") {
     return relocatePublication(resolved, contract, request, decision);
   }
-  return publishDegradedHandoff({
-    workDir: resolved,
-    contract,
-    request,
-    decision,
-  });
+  fail(
+    "ADJUDICATION_ACTION_NOT_ALLOWED",
+    `No Main Codex convergence executor exists for ${decision.action.type}`,
+  );
 }

@@ -97,8 +97,8 @@ Correction of only the MAP candidate named by a MAP Repair Diagnostic while unre
 _Avoid_: Clean Compression Run, full MAP replay
 
 **Main Codex Adjudication**:
-An evidence-bounded decision by the Compression Task coordinator that resolves a captured workflow diagnostic through targeted repair, stage regeneration, or explicit degradation without inventing source facts.
-_Avoid_: Automatic bypass, silent mutation, user handoff
+An evidence-bounded decision by the Compression Task coordinator that resolves a Captured Workflow Diagnostic through directed repair, responsible-stage regeneration, or publication relocation without inventing source facts.
+_Avoid_: Automatic bypass, blind retry, silent mutation, user handoff
 
 **Captured Workflow Diagnostic**:
 A machine-readable problem recorded after a Compression Run becomes durable and before publication completes, including validation, capacity, budget, Worker, integrity, adjudication-application, and publication problems.
@@ -109,16 +109,24 @@ An immutable, evidence-safe record that binds one Captured Workflow Diagnostic t
 _Avoid_: Failure report, retry prompt, raw private evidence
 
 **Adjudication Decision**:
-An append-only Main Codex instruction bound to exactly one active Adjudication Request, choosing bounded repair, responsible-stage regeneration, publication relocation, or explicit degradation with recorded rationale.
-_Avoid_: Error suppression, receipt mutation, unbounded retry
+An append-only Main Codex instruction bound to exactly one active Adjudication Request, choosing directed repair, responsible-stage regeneration, or publication relocation with recorded rationale.
+_Avoid_: Error suppression, receipt mutation, blind retry, incomplete publication
 
 **Adjudication Loop**:
-The persistent Compression Run lifecycle that routes every captured workflow diagnostic to Main Codex Adjudication and resumes from the recorded decision until a Handoff is published.
-_Avoid_: Terminal failure, clean restart, unbounded retry
+The persistent Compression Run lifecycle that routes every Captured Workflow Diagnostic to Main Codex Adjudication and resumes from the recorded decision until a verified normal Handoff is published.
+_Avoid_: Terminal failure, blind retry, incomplete publication
 
-**Degraded Handoff**:
-A valid published Handoff that preserves verified continuation facts and explicitly records unresolved diagnostics or unavailable evidence selected by Main Codex Adjudication.
-_Avoid_: Partial file, fabricated completion, failed export
+**Main Codex Convergence**:
+The sole-owner responsibility in which Main Codex diagnoses every recoverable workflow failure, directs the smallest lawful repair or regeneration, revalidates it, and repeats until a verified normal Handoff is published.
+_Avoid_: Worker-owned recovery, user adjudication, terminal diagnostic, Degraded Handoff
+
+**Verified Handoff**:
+A normal Handoff and Evidence Index pair that passes every applicable semantic, actionability, coverage, integrity, budget, transactional-publication, and post-publication evidence check; it is the only successful terminal artifact.
+_Avoid_: Degraded Handoff, partial file, diagnostic report, unverified summary
+
+**Incomplete Handoff**:
+Any purported Handoff that omits a required fact or gate, carries an unresolved workflow diagnostic, or has not passed final deterministic verification; it is forbidden as a publication outcome.
+_Avoid_: Recovery artifact, successful terminal state, acceptable degradation
 
 **Provider Timing Capability**:
 An execution-surface guarantee that provider-reported MAP generation timing can be correlated with one completed MapDispatch and durably recorded for optional performance projection.

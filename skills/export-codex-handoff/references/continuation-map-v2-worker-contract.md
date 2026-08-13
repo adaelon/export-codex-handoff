@@ -69,16 +69,16 @@ its private chunk, or prose outside the JSON object.
 ## Coordinator handback and adjudication
 
 The Worker owns only its private candidate. It returns a contract-valid `MapReceipt` or the exact
-bounded diagnostic emitted by deterministic check/completion; it never chooses a run-level repair,
-regeneration, or degradation action. A Captured Workflow Diagnostic enters Main Codex Adjudication
+bounded diagnostic emitted by deterministic check/completion; it never chooses a run-level repair or
+regeneration action. A Captured Workflow Diagnostic enters Main Codex Adjudication
 in the same Compression Run. The coordinator must persist the exact evidence-safe `issues[]` in the
 active Adjudication Request, and must not ask the user to choose the repair action.
 
-After Main Codex applies `retry_stage`, the coordinator passes the request's ordered `issues[]`
-unchanged to the responsible Worker and resumes only the recorded command. If a correction cannot
-be proven from those issues, the diagnostic repeats without new corrective evidence, or attempts are
-exhausted, Main Codex selects a different allowed action or `publish_degraded`; no Worker starts a
-clean Compression Run or replays an unrelated dispatch.
+After Main Codex applies `repair_stage`, the coordinator passes the request's ordered `issues[]`
+unchanged to the responsible Worker and resumes only the recorded command on the same dispatch. If a
+same-dispatch correction cannot be proven, Main Codex may select `regenerate_stage` to supersede only
+the responsible generation; otherwise the diagnostic remains active. No Worker starts a clean
+Compression Run or replays an unrelated dispatch.
 
 ## Deterministic completion
 
@@ -94,11 +94,12 @@ contract. Apply every named `fieldPath` using its `correctionHint`, change only 
 candidate, and rerun `--check` on the same dispatch. Do not reinterpret, summarize, or replace the
 issue list with generic retry guidance.
 
-If completion reports `MAP_REPAIR_REQUIRED` and creates an attempt-2 `nextDispatch`, the coordinator
-passes that fresh Worker the exact ordered `details.issues[]` unchanged alongside the dispatch.
-Repair only the named candidate fields for that segment. Other completion diagnostics remain
-bounded and unchanged; do not invent an issue list. Never start a clean Compression Run; never
-replay unrelated MAP Workers, accepted receipts, or other candidates.
+If completion reports `MAP_REPAIR_REQUIRED`, it freezes the current candidate, retains the exact
+ordered `details.issues[]`, and opens an Adjudication Request without creating `nextDispatch`.
+`repair_stage` returns the responsible Worker to the same dispatch; `regenerate_stage` creates a new
+generation only after Main Codex explicitly selects it. Other completion diagnostics remain bounded
+and unchanged; do not invent an issue list. Never start a clean Compression Run; never replay
+unrelated MAP Workers, accepted receipts, or other candidates.
 
 Completion preserves the v1 global Claim and relation derivation, derives each global Finding ID
 from its completed Claim ID, resolves inspection coordinates from immutable Progress Evidence, and

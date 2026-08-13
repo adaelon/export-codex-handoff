@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { canonicalStringify, sha256Text } from "./evidence-addressing.mjs";
+import { verifyEvidenceIndex } from "./evidence-index.mjs";
 import { ExportHandoffError } from "./source-thread.mjs";
 
 const CONTRACT_FILE = "adjudication-contract.json";
@@ -11,10 +12,12 @@ const EVENT_DIR = "events";
 const REQUEST_DIR = "requests";
 const DECISION_DIR = "decisions";
 const APPLICATION_DIR = "applications";
+const PUBLICATION_DIR = "publications";
 const CONTRACT_KIND = "codex-handoff-adjudication-contract";
 const REQUEST_KIND = "codex-handoff-adjudication-request";
 const DECISION_KIND = "codex-handoff-adjudication-decision";
 const APPLICATION_KIND = "codex-handoff-adjudication-application";
+const PUBLICATION_KIND = "codex-handoff-normal-publication-receipt";
 const EVENT_KIND = "codex-handoff-adjudication-event";
 const STATE_KIND = "codex-handoff-adjudication-state";
 const FORMAT_VERSION = 1;
@@ -23,15 +26,15 @@ const RUN_ID_PATTERN = /^adjudication-run-[0-9a-f]{64}$/;
 const REQUEST_ID_PATTERN = /^adjudication-request-[0-9a-f-]{36}$/;
 const DECISION_ID_PATTERN = /^adjudication-decision-[0-9a-f-]{36}$/;
 const APPLICATION_ID_PATTERN = /^adjudication-application-[0-9a-f-]{36}$/;
+const PUBLICATION_ID_PATTERN = /^normal-publication-[0-9a-f]{64}$/;
 const TOKEN_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const EVENT_FILE_PATTERN = /^[0-9]{12}\.json$/;
 const WORKDIR_PREFIX = "codex-handoff-task-";
 
 export const ADJUDICATION_DECISION_ACTIONS = Object.freeze([
-  "retry_stage",
+  "repair_stage",
   "regenerate_stage",
   "relocate_publication",
-  "publish_degraded",
 ]);
 
 export const ADJUDICATION_PHASE_POLICIES = Object.freeze({
@@ -39,115 +42,105 @@ export const ADJUDICATION_PHASE_POLICIES = Object.freeze({
     failureOwner: "coordinator",
     artifactKind: "compression-frame",
     allowedActions: Object.freeze([
-      "retry_stage",
+      "repair_stage",
       "regenerate_stage",
-      "publish_degraded",
     ]),
   }),
   "prepare-frame": Object.freeze({
     failureOwner: "workflow-control-files",
     artifactKind: "compression-frame-input",
     allowedActions: Object.freeze([
-      "retry_stage",
+      "repair_stage",
       "regenerate_stage",
-      "publish_degraded",
     ]),
   }),
   "validate-frame": Object.freeze({
     failureOwner: "compression-frame-author",
     artifactKind: "compression-frame",
     allowedActions: Object.freeze([
-      "retry_stage",
+      "repair_stage",
       "regenerate_stage",
-      "publish_degraded",
     ]),
   }),
   "validate-map-claim": Object.freeze({
     failureOwner: "coordinator",
     artifactKind: "map-dispatch-claim",
     allowedActions: Object.freeze([
-      "retry_stage",
+      "repair_stage",
       "regenerate_stage",
-      "publish_degraded",
     ]),
   }),
   "validate-map-check": Object.freeze({
     failureOwner: "map-worker",
     artifactKind: "map-candidate",
     allowedActions: Object.freeze([
-      "retry_stage",
+      "repair_stage",
       "regenerate_stage",
-      "publish_degraded",
     ]),
   }),
   "validate-map-complete": Object.freeze({
     failureOwner: "map-worker",
     artifactKind: "map-candidate",
     allowedActions: Object.freeze([
-      "retry_stage",
+      "repair_stage",
       "regenerate_stage",
-      "publish_degraded",
     ]),
   }),
   "validate-map-accept": Object.freeze({
     failureOwner: "coordinator",
     artifactKind: "map-receipt",
     allowedActions: Object.freeze([
+      "repair_stage",
       "regenerate_stage",
-      "publish_degraded",
     ]),
   }),
   "validate-map": Object.freeze({
     failureOwner: "earliest-failing-map-subphase",
     artifactKind: "map-lifecycle",
     allowedActions: Object.freeze([
-      "retry_stage",
+      "repair_stage",
       "regenerate_stage",
-      "publish_degraded",
     ]),
   }),
   "record-map-metric": Object.freeze({
     failureOwner: "host-ingress",
     artifactKind: "provider-observation",
     allowedActions: Object.freeze([
-      "retry_stage",
+      "repair_stage",
       "regenerate_stage",
-      "publish_degraded",
     ]),
   }),
   "schedule-map": Object.freeze({
     failureOwner: "coordinator",
     artifactKind: "map-wave-schedule",
     allowedActions: Object.freeze([
-      "retry_stage",
-      "publish_degraded",
+      "repair_stage",
+      "regenerate_stage",
     ]),
   }),
   "prepare-reduce": Object.freeze({
     failureOwner: "earliest-failing-map-or-reduce-input-owner",
     artifactKind: "reduce-input",
     allowedActions: Object.freeze([
-      "retry_stage",
+      "repair_stage",
       "regenerate_stage",
-      "publish_degraded",
     ]),
   }),
   "validate-reduce": Object.freeze({
     failureOwner: "reduce-author",
     artifactKind: "reduce-result",
     allowedActions: Object.freeze([
-      "retry_stage",
+      "repair_stage",
       "regenerate_stage",
-      "publish_degraded",
     ]),
   }),
   publish: Object.freeze({
     failureOwner: "publisher",
     artifactKind: "publication-pair",
     allowedActions: Object.freeze([
-      "retry_stage",
+      "repair_stage",
+      "regenerate_stage",
       "relocate_publication",
-      "publish_degraded",
     ]),
   }),
 });
@@ -306,6 +299,7 @@ function adjudicationPaths(workDir) {
     requests: path.join(root, REQUEST_DIR),
     decisions: path.join(root, DECISION_DIR),
     applications: path.join(root, APPLICATION_DIR),
+    publications: path.join(root, PUBLICATION_DIR),
   };
   for (const [label, target] of Object.entries(paths)) {
     assertInsideWorkDir(workDir, target, `Adjudication ${label} path`);
@@ -738,7 +732,7 @@ function validateDecisionInput(input) {
   if (!ADJUDICATION_DECISION_ACTIONS.includes(input.action.type)) {
     fail(code, `Unknown adjudication action ${input.action.type}`);
   }
-  if (["retry_stage", "regenerate_stage"].includes(input.action.type)) {
+  if (["repair_stage", "regenerate_stage"].includes(input.action.type)) {
     requireExactKeys(input.action, ["type", "phase"], code, "action");
     requireToken(input.action.phase, code, "action.phase");
   } else if (input.action.type === "relocate_publication") {
@@ -783,7 +777,7 @@ function validateDecisionForRequest(input, requestState) {
     );
   }
   if (
-    ["retry_stage", "regenerate_stage"].includes(input.action.type) &&
+    ["repair_stage", "regenerate_stage"].includes(input.action.type) &&
     input.action.phase !== requestState.request.phase
   ) {
     fail(
@@ -914,6 +908,64 @@ function validateApplicationDocument(application, context) {
   return application;
 }
 
+function validatePublicationDocument(publication, context) {
+  const code = "ADJUDICATION_DOCUMENT_INVALID";
+  requireExactKeys(publication, [
+    "formatVersion",
+    "kind",
+    "publicationId",
+    "runId",
+    "contractDigest",
+    "createdAt",
+    "publicationType",
+    "outputPath",
+    "evidenceIndexPath",
+    "sourceRevision",
+    "handoffDigest",
+    "evidenceIndexDigest",
+    "structuralDigest",
+    "outputChars",
+    "evidenceIndexChars",
+    "indexedAnchors",
+    "evidenceVerified",
+  ], code, "Normal publication receipt");
+  if (
+    publication.formatVersion !== FORMAT_VERSION ||
+    publication.kind !== PUBLICATION_KIND ||
+    !PUBLICATION_ID_PATTERN.test(publication.publicationId || "") ||
+    publication.runId !== context.contract.runId ||
+    publication.contractDigest !== context.contractDigest ||
+    publication.publicationType !== "normal_handoff" ||
+    publication.sourceRevision !== context.contract.sourceRevision ||
+    publication.evidenceVerified !== true
+  ) {
+    fail(code, "Normal publication receipt is not bound to its immutable contract");
+  }
+  requireIsoTimestamp(publication.createdAt, code, "publication.createdAt");
+  requireString(publication.outputPath, 2048, code, "publication.outputPath");
+  requireString(
+    publication.evidenceIndexPath,
+    2048,
+    code,
+    "publication.evidenceIndexPath",
+  );
+  for (const [label, digest] of [
+    ["publication.handoffDigest", publication.handoffDigest],
+    ["publication.evidenceIndexDigest", publication.evidenceIndexDigest],
+    ["publication.structuralDigest", publication.structuralDigest],
+  ]) requireDigest(digest, code, label);
+  for (const [label, value] of [
+    ["publication.outputChars", publication.outputChars],
+    ["publication.evidenceIndexChars", publication.evidenceIndexChars],
+    ["publication.indexedAnchors", publication.indexedAnchors],
+  ]) {
+    if (!Number.isInteger(value) || value < 0) {
+      fail(code, `${label} must be a non-negative integer`);
+    }
+  }
+  return publication;
+}
+
 function eventDigest(eventWithoutDigest) {
   return `sha256:${sha256Text(canonicalStringify(eventWithoutDigest))}`;
 }
@@ -976,8 +1028,9 @@ function validateEvent(event, context, expectedSequence, previousEventDigest) {
       "decision_submitted",
       "application_succeeded",
       "application_failed",
+      "publication_succeeded",
     ].includes(event.eventType) ||
-    !["request", "decision", "application"].includes(event.documentKind)
+    !["request", "decision", "application", "publication"].includes(event.documentKind)
   ) {
     fail(code, `Adjudication event ${expectedSequence} breaks the append-only chain`);
   }
@@ -1018,7 +1071,8 @@ async function loadBoundDocument(target, expectedDigest, kind, context) {
   }
   if (kind === "request") validateRequestDocument(document.value, context);
   else if (kind === "decision") validateDecisionDocument(document.value, context);
-  else validateApplicationDocument(document.value, context);
+  else if (kind === "application") validateApplicationDocument(document.value, context);
+  else validatePublicationDocument(document.value, context);
   return document.value;
 }
 
@@ -1044,16 +1098,14 @@ function publicRequestState(entry) {
   };
 }
 
-function isDegradedPublicationRequest(entry) {
-  return (
-    entry.status === "APPLIED" &&
-    entry.decision?.action?.type === "publish_degraded" &&
-    entry.application?.result?.effect === "degraded_handoff_published" &&
-    entry.application.result.publicationState === "PUBLISHED"
-  );
-}
-
-function buildPublicState(context, paths, events, requests, applications = []) {
+function buildPublicState(
+  context,
+  paths,
+  events,
+  requests,
+  applications = [],
+  publication = null,
+) {
   const active = requests.find((entry) => [
     "AWAITING_ADJUDICATION",
     "APPLYING_ADJUDICATION",
@@ -1071,28 +1123,17 @@ function buildPublicState(context, paths, events, requests, applications = []) {
   const activeRequest = active
     ? publicRequests.find((entry) => entry.requestId === active.requestId)
     : null;
-  const publishedRequests = publicRequests.filter(isDegradedPublicationRequest);
-  if (publishedRequests.length > 1 || (activeRequest && publishedRequests.length > 0)) {
+  if (activeRequest && publication) {
     fail(
       "ADJUDICATION_EVENT_CHAIN_INVALID",
       "Event replay produced an invalid post-publication Adjudication state",
     );
   }
-  const publishedRequest = publishedRequests[0] || null;
-  const publication = publishedRequest ? {
-    requestId: publishedRequest.requestId,
-    decisionId: publishedRequest.decisionId,
-    applicationId: publishedRequest.applicationId,
-    outputPath: publishedRequest.application.result.outputPath,
-    evidenceIndexPath: publishedRequest.application.result.evidenceIndexPath,
-    handoffDigest: publishedRequest.application.result.handoffDigest,
-    evidenceIndexDigest: publishedRequest.application.result.evidenceIndexDigest,
-  } : null;
   return {
     formatVersion: FORMAT_VERSION,
     kind: STATE_KIND,
     runId: context.contract.runId,
-    lifecycleState: active?.status || (publishedRequest ? "PUBLISHED" : "RUNNING"),
+    lifecycleState: active?.status || (publication ? "PUBLISHED" : "RUNNING"),
     contract: {
       documentPath: context.contractPath,
       contractDigest: context.contractDigest,
@@ -1103,7 +1144,12 @@ function buildPublicState(context, paths, events, requests, applications = []) {
       headDigest: events.at(-1)?.eventDigest || null,
     },
     activeRequest,
-    publication,
+    publication: publication ? {
+      publicationId: publication.document.publicationId,
+      publicationDigest: publication.documentDigest,
+      documentPath: publication.documentPath,
+      ...structuredClone(publication.document),
+    } : null,
     requests: publicRequests,
     applications: applications.map((entry) => ({
       applicationId: entry.applicationId,
@@ -1119,13 +1165,24 @@ async function replayAdjudication(context) {
   if (!(await pathExists(paths.root))) {
     return buildPublicState(context, paths, [], [], []);
   }
-  const [eventNames, requestNames, decisionNames, applicationNames] = await Promise.all([
+  const [
+    eventNames,
+    requestNames,
+    decisionNames,
+    applicationNames,
+    publicationNames,
+  ] = await Promise.all([
     listJsonFiles(paths.events, "Adjudication event directory"),
     listJsonFiles(paths.requests, "Adjudication request directory"),
     listJsonFiles(paths.decisions, "Adjudication decision directory"),
     listJsonFiles(
       paths.applications,
       "Adjudication application directory",
+      { allowMissing: true },
+    ),
+    listJsonFiles(
+      paths.publications,
+      "Adjudication publication directory",
       { allowMissing: true },
     ),
   ]);
@@ -1136,6 +1193,8 @@ async function replayAdjudication(context) {
   const referencedRequests = new Set();
   const referencedDecisions = new Set();
   const referencedApplications = new Set();
+  const referencedPublications = new Set();
+  let publication = null;
   let previousEventDigest = null;
 
   for (let index = 0; index < eventNames.length; index += 1) {
@@ -1172,8 +1231,8 @@ async function replayAdjudication(context) {
         [
           "AWAITING_ADJUDICATION",
           "APPLYING_ADJUDICATION",
-        ].includes(entry.status) || isDegradedPublicationRequest(entry)
-      ))) {
+        ].includes(entry.status)
+      )) || publication) {
         fail(
           "ADJUDICATION_EVENT_CHAIN_INVALID",
           "A new request cannot replace an active or published Compression Run",
@@ -1227,7 +1286,7 @@ async function replayAdjudication(context) {
       request.decisionDocumentPath = documentPath;
       request.decision = decision;
       referencedDecisions.add(`${decision.decisionId}.json`);
-    } else {
+    } else if (event.eventType !== "publication_succeeded") {
       if (
         event.documentKind !== "application" ||
         !APPLICATION_ID_PATTERN.test(event.documentId)
@@ -1312,6 +1371,50 @@ async function replayAdjudication(context) {
         requestById.set(successorEntry.requestId, successorEntry);
         referencedRequests.add(`${successorEntry.requestId}.json`);
       }
+    } else {
+      if (
+        event.documentKind !== "publication" ||
+        !PUBLICATION_ID_PATTERN.test(event.documentId)
+      ) {
+        fail(
+          "ADJUDICATION_EVENT_CHAIN_INVALID",
+          "Publication event must reference exactly one normal publication receipt",
+        );
+      }
+      if (
+        publication ||
+        requests.some((entry) => [
+          "AWAITING_ADJUDICATION",
+          "APPLYING_ADJUDICATION",
+        ].includes(entry.status))
+      ) {
+        fail(
+          "ADJUDICATION_EVENT_CHAIN_INVALID",
+          "Normal publication cannot replace an active request or prior publication",
+        );
+      }
+      const documentPath = path.join(
+        paths.publications,
+        `${event.documentId}.json`,
+      );
+      const document = await loadBoundDocument(
+        documentPath,
+        event.documentDigest,
+        "publication",
+        context,
+      );
+      if (document.publicationId !== event.documentId) {
+        fail(
+          "ADJUDICATION_EVENT_CHAIN_INVALID",
+          "Publication receipt identity does not match its event",
+        );
+      }
+      publication = {
+        document,
+        documentPath,
+        documentDigest: event.documentDigest,
+      };
+      referencedPublications.add(`${document.publicationId}.json`);
     }
   }
 
@@ -1319,18 +1422,172 @@ async function replayAdjudication(context) {
     canonicalStringify(requestNames) !== canonicalStringify([...referencedRequests].sort()) ||
     canonicalStringify(decisionNames) !== canonicalStringify([...referencedDecisions].sort()) ||
     canonicalStringify(applicationNames) !==
-      canonicalStringify([...referencedApplications].sort())
+      canonicalStringify([...referencedApplications].sort()) ||
+    canonicalStringify(publicationNames) !==
+      canonicalStringify([...referencedPublications].sort())
   ) {
     fail(
       "ADJUDICATION_EVENT_CHAIN_INVALID",
       "Adjudication documents and append-only events do not match",
     );
   }
-  return buildPublicState(context, paths, events, requests, applications);
+  return buildPublicState(
+    context,
+    paths,
+    events,
+    requests,
+    applications,
+    publication,
+  );
 }
 
 export async function inspectAdjudication(workDir) {
   const context = await loadContractContext(workDir);
+  return replayAdjudication(context);
+}
+
+export async function recordNormalPublication(workDir, input, dependencies = {}) {
+  requirePlainObject(
+    input,
+    "INVALID_NORMAL_PUBLICATION",
+    "Normal publication result",
+  );
+  const context = await loadContractContext(workDir);
+  const state = await replayAdjudication(context);
+  if (state.lifecycleState === "PUBLISHED") {
+    if (
+      state.publication?.handoffDigest === input.handoffDigest &&
+      state.publication?.evidenceIndexDigest === input.evidenceIndexDigest &&
+      path.resolve(state.publication.outputPath) === path.resolve(input.outputPath) &&
+      path.resolve(state.publication.evidenceIndexPath) ===
+        path.resolve(input.evidenceIndexPath)
+    ) return state;
+    fail(
+      "NORMAL_PUBLICATION_CONFLICT",
+      "Compression Run already recorded a different normal Handoff pair",
+    );
+  }
+  if (state.lifecycleState !== "RUNNING") {
+    fail(
+      "NORMAL_PUBLICATION_BLOCKED",
+      "A normal Handoff cannot publish while an Adjudication Request is active",
+    );
+  }
+
+  const manifestDocument = await readJsonDocument(
+    path.join(context.workDir, "manifest.json"),
+    "ADJUDICATION_RUN_INVALID",
+    "Compression Task manifest",
+  );
+  const manifest = requirePlainObject(
+    manifestDocument.value,
+    "ADJUDICATION_RUN_INVALID",
+    "Compression Task manifest",
+  );
+  const outputPath = path.resolve(input.outputPath || "");
+  const evidenceIndexPath = path.resolve(input.evidenceIndexPath || "");
+  if (
+    manifest.formatVersion !== 2 ||
+    manifest.sessionId !== context.contract.sessionId ||
+    manifest.sourceRevision !== context.contract.sourceRevision ||
+    path.resolve(manifest.outputPath || "") !== outputPath ||
+    path.resolve(manifest.evidenceIndexPath || "") !== evidenceIndexPath
+  ) {
+    fail(
+      "INVALID_NORMAL_PUBLICATION",
+      "Normal publication paths and source revision must match the active manifest",
+    );
+  }
+
+  const [handoffText, evidenceIndexText] = await Promise.all([
+    fs.promises.readFile(outputPath, "utf8"),
+    fs.promises.readFile(evidenceIndexPath, "utf8"),
+  ]);
+  if (!/^# Codex Handoff(?: v2)?\r?\n/u.test(handoffText)) {
+    fail(
+      "INCOMPLETE_HANDOFF_FORBIDDEN",
+      "Only a normal Codex Handoff may produce a terminal publication receipt",
+    );
+  }
+  const handoffDigest = textDigest(handoffText);
+  const evidenceIndexDigest = textDigest(evidenceIndexText);
+  if (
+    handoffDigest !== input.handoffDigest ||
+    evidenceIndexDigest !== input.evidenceIndexDigest
+  ) {
+    fail(
+      "NORMAL_PUBLICATION_INTEGRITY_MISMATCH",
+      "Published Handoff bytes do not match the proposed terminal receipt",
+    );
+  }
+  let evidenceIndex;
+  try {
+    evidenceIndex = JSON.parse(evidenceIndexText);
+  } catch {
+    fail(
+      "NORMAL_PUBLICATION_INTEGRITY_MISMATCH",
+      "Published Evidence Index is not valid JSON",
+    );
+  }
+  const verifyIndex = dependencies.verifyEvidenceIndex || verifyEvidenceIndex;
+  await verifyIndex(evidenceIndex);
+  if (
+    evidenceIndex.source?.sourceRevision !== context.contract.sourceRevision ||
+    evidenceIndex.anchors?.length !== input.indexedAnchors ||
+    handoffText.length !== input.outputChars ||
+    evidenceIndexText.length !== input.evidenceIndexChars
+  ) {
+    fail(
+      "NORMAL_PUBLICATION_INTEGRITY_MISMATCH",
+      "Published pair metrics do not match the verified normal artifacts",
+    );
+  }
+
+  const publicationId = `normal-publication-${sha256Text(canonicalStringify({
+    runId: context.contract.runId,
+    outputPath,
+    evidenceIndexPath,
+    handoffDigest,
+    evidenceIndexDigest,
+    structuralDigest: input.structuralDigest,
+  }))}`;
+  const publication = {
+    formatVersion: FORMAT_VERSION,
+    kind: PUBLICATION_KIND,
+    publicationId,
+    runId: context.contract.runId,
+    contractDigest: context.contractDigest,
+    createdAt: new Date().toISOString(),
+    publicationType: "normal_handoff",
+    outputPath,
+    evidenceIndexPath,
+    sourceRevision: context.contract.sourceRevision,
+    handoffDigest,
+    evidenceIndexDigest,
+    structuralDigest: input.structuralDigest,
+    outputChars: input.outputChars,
+    evidenceIndexChars: input.evidenceIndexChars,
+    indexedAnchors: input.indexedAnchors,
+    evidenceVerified: true,
+  };
+  validatePublicationDocument(publication, context);
+  const paths = adjudicationPaths(context.workDir);
+  await ensureAdjudicationDirectories(paths);
+  const documentPath = path.join(paths.publications, `${publicationId}.json`);
+  await writeJsonExclusive(documentPath, publication);
+  const publicationText = await fs.promises.readFile(documentPath, "utf8");
+  try {
+    await appendEvent(context, state, {
+      eventType: "publication_succeeded",
+      documentKind: "publication",
+      documentId: publicationId,
+      documentDigest: textDigest(publicationText),
+      recordedAt: publication.createdAt,
+    });
+  } catch (error) {
+    await fs.promises.rm(documentPath, { force: true }).catch(() => {});
+    throw error;
+  }
   return replayAdjudication(context);
 }
 
@@ -1339,6 +1596,7 @@ async function ensureAdjudicationDirectories(paths) {
   await fs.promises.mkdir(paths.requests, { recursive: true });
   await fs.promises.mkdir(paths.decisions, { recursive: true });
   await fs.promises.mkdir(paths.applications, { recursive: true });
+  await fs.promises.mkdir(paths.publications, { recursive: true });
 }
 
 async function appendEvent(context, state, eventInput) {
@@ -1770,7 +2028,18 @@ async function recordFailedApplication(context, state, error) {
 export async function applyAdjudicationDecision(workDir, executeAction) {
   const context = await loadContractContext(workDir);
   const state = await replayAdjudication(context);
-  if (["RUNNING", "PUBLISHED"].includes(state.lifecycleState)) {
+  if (state.lifecycleState === "PUBLISHED") {
+    return {
+      ...state,
+      applied: false,
+      result: {
+        effect: "normal_handoff_published",
+        publicationState: "PUBLISHED",
+        ...structuredClone(state.publication),
+      },
+    };
+  }
+  if (state.lifecycleState === "RUNNING") {
     return appliedResponse(state, false);
   }
   if (

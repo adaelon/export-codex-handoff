@@ -33,16 +33,15 @@ const SOURCE_REVISION = `sha256:${"d".repeat(64)}`;
 const CLI_SENTINEL = "PRIVATE-CLI-PARSE-SENTINEL";
 
 const REPAIR_ACTIONS = [
-  "retry_stage",
+  "repair_stage",
   "regenerate_stage",
-  "publish_degraded",
 ];
-const ACCEPT_ACTIONS = ["regenerate_stage", "publish_degraded"];
-const SCHEDULE_ACTIONS = ["retry_stage", "publish_degraded"];
+const ACCEPT_ACTIONS = ["repair_stage", "regenerate_stage"];
+const SCHEDULE_ACTIONS = ["repair_stage", "regenerate_stage"];
 const PUBLISH_ACTIONS = [
-  "retry_stage",
+  "repair_stage",
+  "regenerate_stage",
   "relocate_publication",
-  "publish_degraded",
 ];
 
 function evidencePack() {
@@ -627,7 +626,7 @@ test("MA2 gates ordinary commands while a submitted decision awaits MA3 applicat
       runId: awaiting.runId,
       requestId: awaiting.activeRequest.requestId,
       requestDigest: awaiting.activeRequest.requestDigest,
-      action: { type: "retry_stage", phase: "prepare-frame" },
+      action: { type: "repair_stage", phase: "prepare-frame" },
       rationale: "Leave the valid decision unapplied until MA3.",
     });
     assert.equal(applying.lifecycleState, "APPLYING_ADJUDICATION");

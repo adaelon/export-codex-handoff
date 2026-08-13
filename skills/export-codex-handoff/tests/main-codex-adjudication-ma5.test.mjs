@@ -14,7 +14,10 @@ import {
 import { captureAdjudicationFailure } from "../scripts/lib/adjudication.mjs";
 import { buildEvidenceIndex } from "../scripts/lib/evidence-index.mjs";
 import { ExportHandoffError } from "../scripts/lib/source-thread.mjs";
-import { prepareCompressionTask } from "../scripts/lib/task-workflow.mjs";
+import {
+  prepareCompressionTask,
+  prepareFrameStage,
+} from "../scripts/lib/task-workflow.mjs";
 import { comparePackageTrees } from "./lib/action-ready-acceptance.mjs";
 
 const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -208,7 +211,7 @@ test("MA5 operator contract owns every captured diagnostic until PUBLISHED", () 
     "utf8",
   );
 
-  assert.match(skill, /^## Main Codex adjudication loop$/mu);
+  assert.match(skill, /^## Main Codex Convergence$/mu);
   assert.match(skill, /while .*lifecycleState.*PUBLISHED/iu);
   assert.match(skill, /adjudicate <WORK_DIR> --inspect/u);
   assert.match(skill, /adjudicate <WORK_DIR> --capture <DIAGNOSTIC_CODE>/u);
@@ -217,8 +220,9 @@ test("MA5 operator contract owns every captured diagnostic until PUBLISHED", () 
   assert.match(skill, /resume\.command/u);
   assert.match(skill, /Main Codex owns every Adjudication Decision/u);
   assert.match(skill, /never ask the user to adjudicate an internal workflow diagnostic/iu);
-  assert.match(skill, /choose `publish_degraded`/u);
-  assert.match(skill, /same Compression Run/u);
+  assert.match(skill, /`repair_stage`/u);
+  assert.match(skill, /verified normal Handoff/iu);
+  assert.doesNotMatch(skill, /`publish_degraded`|Degraded Handoff/u);
   assert.doesNotMatch(skill, /On `MAP_WORKER_EXHAUSTED`, stop and\s+report/iu);
   assert.doesNotMatch(skill, /Stop without retry or publication on/iu);
   assert.doesNotMatch(skill, /On any other failure, stop and report/iu);
@@ -227,11 +231,11 @@ test("MA5 operator contract owns every captured diagnostic until PUBLISHED", () 
   assert.match(workerContract, /Main Codex Adjudication/u);
   assert.match(workerContract, /same Compression Run/u);
   assert.match(workerContract, /must not ask the user to choose the repair action/iu);
-  assert.match(architecture, /MA1-MA5 are implemented/u);
-  assert.match(architecture, /operator loop/iu);
+  assert.match(architecture, /Main Codex Convergence/u);
+  assert.match(architecture, /normal Handoff/iu);
 });
 
-test("MA5 captures a pre-worker capacity diagnostic for Main Codex degradation", async () => {
+test("MA5 keeps a pre-worker capacity diagnostic under Main Codex repair ownership", async () => {
   const configuredRoot = process.env[LIVE_ACCEPTANCE_ROOT_ENV]?.trim();
   const root = configuredRoot
     ? path.resolve(configuredRoot)
@@ -254,27 +258,29 @@ test("MA5 captures a pre-worker capacity diagnostic for Main Codex degradation",
     assert.equal(inspected.activeRequest.request.phase, "schedule-map");
     assert.equal(inspected.activeRequest.request.failureOwner, "coordinator");
     assert.deepEqual(inspected.activeRequest.request.allowedActions, [
-      "retry_stage",
-      "publish_degraded",
+      "repair_stage",
+      "regenerate_stage",
     ]);
     await submitDecision(
       prepared,
       inspected,
-      { type: "publish_degraded" },
-      "No isolated Worker slot exists; publish the verified pre-MAP evidence explicitly degraded.",
+      { type: "repair_stage", phase: "schedule-map" },
+      "Main Codex will observe fresh capacity and resume only the scheduling ingress.",
     );
-    const published = parseSuccess(runCli([
+    const repaired = parseSuccess(runCli([
       "adjudicate",
       prepared.workDir,
       "--apply",
     ]));
-    assert.equal(published.lifecycleState, "PUBLISHED");
-    assert.equal(published.result.effect, "degraded_handoff_published");
-    const verified = parseSuccess(runCli([
-      "verify-evidence",
-      prepared.evidenceIndexPath,
-    ]));
-    assert.equal(verified.valid, true);
+    assert.equal(repaired.lifecycleState, "RUNNING");
+    assert.equal(repaired.result.effect, "directed_repair_applied");
+    assert.deepEqual(repaired.result.resume.command, [
+      "schedule-map",
+      prepared.workDir,
+      "<AVAILABLE_SLOTS>",
+    ]);
+    await assert.rejects(fs.promises.access(prepared.outputPath), { code: "ENOENT" });
+    await assert.rejects(fs.promises.access(prepared.evidenceIndexPath), { code: "ENOENT" });
     if (configuredRoot) {
       const finalState = parseSuccess(runCli([
         "adjudicate",
@@ -295,8 +301,8 @@ test("MA5 captures a pre-worker capacity diagnostic for Main Codex degradation",
         applicationIds: finalState.applications.map(
           (entry) => entry.applicationId,
         ),
-        publication: published.result,
-        evidenceVerification: verified,
+        repair: repaired.result,
+        publication: null,
         workDir: prepared.workDir,
       });
     }
@@ -370,7 +376,7 @@ test("MA5 persists exact evidence-safe MAP repair issues in the active request",
   }
 });
 
-test("MA5 fault injection retries, resumes, then degrades the same Compression Run", async () => {
+test("MA5 repeated failure stays with Main Codex until a directed repair validates", async () => {
   const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "codex-ma5-loop-"));
   try {
     const prepared = await prepareWorkflow(root);
@@ -389,8 +395,8 @@ test("MA5 fault injection retries, resumes, then degrades the same Compression R
     const firstApplying = await submitDecision(
       prepared,
       firstInspection,
-      { type: "retry_stage", phase: "validate-frame" },
-      "Retry the exact responsible stage once before selecting degradation.",
+      { type: "repair_stage", phase: "validate-frame" },
+      "Resume only after Main Codex has a concrete correction for the missing Frame input.",
     );
     assert.equal(firstApplying.lifecycleState, "APPLYING_ADJUDICATION");
     const resumed = parseSuccess(runCli([
@@ -418,39 +424,66 @@ test("MA5 fault injection retries, resumes, then degrades the same Compression R
     assert.equal(secondInspection.requests[0].status, "APPLIED");
     assert.equal(secondInspection.activeRequest.status, "AWAITING_ADJUDICATION");
 
+    const forbiddenPath = path.join(root, "forbidden-degraded-decision.json");
+    await writeJson(forbiddenPath, {
+      runId: secondInspection.runId,
+      requestId: secondInspection.activeRequest.requestId,
+      requestDigest: secondInspection.activeRequest.requestDigest,
+      action: { type: "publish_degraded" },
+      rationale: "This incomplete terminal path is intentionally forbidden.",
+    });
+    const forbidden = runCli([
+      "adjudicate",
+      prepared.workDir,
+      "--submit",
+      forbiddenPath,
+    ]);
+    assert.equal(forbidden.status, 1);
+    assert.equal(JSON.parse(forbidden.stderr).code, "INVALID_ADJUDICATION_DECISION");
+    await assert.rejects(fs.promises.access(prepared.outputPath), { code: "ENOENT" });
+    await assert.rejects(fs.promises.access(prepared.evidenceIndexPath), { code: "ENOENT" });
+
+    const frameStage = await prepareFrameStage(prepared.workDir);
+    const frameInput = JSON.parse(await fs.promises.readFile(
+      frameStage.frameInputPath,
+      "utf8",
+    ));
+    await writeJson(frameStage.framePath, {
+      frameId: frameInput.expectedFrameId,
+      currentGoal: frameInput.latestUserGoal,
+      taskType: "implementation",
+      taskPhase: "implementing",
+      explicitExclusions: frameInput.explicitExclusions,
+      preservationPolicy: frameInput.preservationPolicy,
+      anchors: frameInput.requiredFrameAnchors,
+    });
     const secondApplying = await submitDecision(
       prepared,
       secondInspection,
-      { type: "publish_degraded" },
-      "The same diagnostic repeated after one bounded retry; publish verified evidence explicitly degraded.",
+      { type: "repair_stage", phase: "validate-frame" },
+      "Main Codex created the exact missing Frame input and candidate for deterministic validation.",
     );
     assert.equal(secondApplying.lifecycleState, "APPLYING_ADJUDICATION");
-    const published = parseSuccess(runCli([
+    const repaired = parseSuccess(runCli([
       "adjudicate",
       prepared.workDir,
       "--apply",
     ]));
-    assert.equal(published.runId, firstInspection.runId);
-    assert.equal(published.lifecycleState, "PUBLISHED");
-    assert.equal(published.result.effect, "degraded_handoff_published");
+    assert.equal(repaired.runId, firstInspection.runId);
+    assert.equal(repaired.lifecycleState, "RUNNING");
+    const validated = parseSuccess(runCli(repaired.result.resume.command));
+    assert.match(validated.frameDigest, /^sha256:[0-9a-f]{64}$/u);
 
-    const verified = parseSuccess(runCli([
-      "verify-evidence",
-      prepared.evidenceIndexPath,
-    ]));
-    assert.equal(verified.valid, true);
-    const handoff = await fs.promises.readFile(prepared.outputPath, "utf8");
-    assert.match(handoff, /^# Degraded Codex Handoff/mu);
-    assert.equal(handoff.includes(EXACT_GOAL), true);
     const finalInspection = parseSuccess(runCli([
       "adjudicate",
       prepared.workDir,
       "--inspect",
     ]));
-    assert.equal(finalInspection.lifecycleState, "PUBLISHED");
+    assert.equal(finalInspection.lifecycleState, "RUNNING");
     assert.equal(finalInspection.requests.length, 2);
     assert.equal(finalInspection.applications.length, 2);
     assert.equal(finalInspection.eventChain.eventCount, 6);
+    assert.equal(finalInspection.publication, null);
   } finally {
     await fs.promises.rm(root, { recursive: true, force: true });
   }

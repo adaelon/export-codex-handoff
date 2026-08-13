@@ -23,11 +23,16 @@ test("TR3 passes the exact MAP repair issue list to the responsible Worker", () 
   );
   assert.match(
     skill,
-    /attempt-2 `nextDispatch`[\s\S]{0,600}exact ordered `details\.issues\[\]` unchanged/u,
+    /completion reports `MAP_REPAIR_REQUIRED`[\s\S]{0,600}without creating[\s\S]{0,100}`nextDispatch`[\s\S]{0,600}`repair_stage`[\s\S]{0,300}same dispatch[\s\S]{0,300}`regenerate_stage`[\s\S]{0,300}responsible generation/u,
   );
+  assert.doesNotMatch(skill, /attempt-2 `nextDispatch`/u);
   assert.match(
     workerContract,
     /`MAP_REPAIR_REQUIRED`[\s\S]{0,600}exact ordered `details\.issues\[\]`[\s\S]{0,600}fieldPath[\s\S]{0,200}correctionHint/u,
+  );
+  assert.match(
+    workerContract,
+    /completion reports `MAP_REPAIR_REQUIRED`[\s\S]{0,600}without creating `nextDispatch`[\s\S]{0,600}`repair_stage`[\s\S]{0,300}same dispatch[\s\S]{0,300}`regenerate_stage`/u,
   );
 });
 
@@ -39,7 +44,7 @@ test("TR3 prohibits clean-run recovery and unrelated MAP replay", () => {
 
   for (const contract of [skill, workerContract]) {
     assert.match(contract, /Never start a clean Compression Run/u);
-    assert.match(contract, /never\s+replay unrelated MAP Workers/iu);
+    assert.match(contract, /never\s+replay\s+unrelated MAP Workers/iu);
   }
 });
 
@@ -52,6 +57,7 @@ test("TR3 routes REDUCE-owned failures to REDUCE-only correction", () => {
   );
   assert.match(
     skill,
-    /REDUCE-owned[\s\S]{0,600}must not create a MAP attempt-2 dispatch or replay a MAP Worker/u,
+    /REDUCE-owned[\s\S]{0,600}must not create a MAP dispatch or replay a MAP Worker/u,
   );
+  assert.doesNotMatch(skill, /MAP attempt-2 dispatch/u);
 });

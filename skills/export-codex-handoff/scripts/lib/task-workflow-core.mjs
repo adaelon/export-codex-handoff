@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -5,6 +6,7 @@ import path from "node:path";
 import {
   initializeAdjudicationContract,
   inspectAdjudication,
+  recordNormalPublication,
 } from "./adjudication.mjs";
 import { buildEvidencePack } from "./evidence-pack.mjs";
 import {
@@ -904,7 +906,7 @@ async function readAcceptedMap(segment, frozenFrame, options = {}) {
       { diagnosticsDir: segment.diagnosticsDir },
     );
   }
-  if (segment.workerStatus === "pending" && segment.lastDiagnosticCode) {
+  if (["pending", "failed"].includes(segment.workerStatus) && segment.lastDiagnosticCode) {
     throw new ExportHandoffError(
       segment.lastDiagnosticCode,
       `${segment.segmentId} awaits a corrected MAP Worker attempt`,
@@ -2091,7 +2093,7 @@ async function recordMapFailure(manifest, stage, error) {
   };
   validateMapReceipt(receipt, stage.dispatch);
   await fs.promises.mkdir(stage.diagnosticsDir, { recursive: true });
-  const prefix = `attempt-${stage.dispatch.attempt}`;
+  const prefix = `attempt-${stage.dispatch.attempt}-failure-${crypto.randomUUID()}`;
   await writeJson(path.join(stage.diagnosticsDir, `${prefix}.receipt.json`), receipt, {
     exclusive: true,
   });
@@ -2104,17 +2106,11 @@ async function recordMapFailure(manifest, stage, error) {
     await fs.promises.rm(stage.summaryPath, { force: true });
   }
   stage.lastDiagnosticCode = receipt.diagnosticCode;
+  stage.workerStatus = "failed";
   delete stage.checkedSummaryDigest;
   delete stage.summaryCheckedAt;
-  if (stage.dispatch.attempt === 1) {
-    stage.dispatch = createStageDispatch(manifest, stage, 2);
-    stage.workerStatus = "pending";
-    await writeManifest(manifest);
-    return { receipt, nextDispatch: stage.dispatch, exhausted: false };
-  }
-  stage.workerStatus = "exhausted";
   await writeManifest(manifest);
-  return { receipt, nextDispatch: null, exhausted: true };
+  return { receipt };
 }
 
 export async function checkMapDispatch(
@@ -2226,20 +2222,9 @@ export async function completeMapDispatch(workDir, segmentId, dispatchId) {
   } catch (error) {
     stage.completeDurationMs = durationSince(startedAtMs);
     const failure = await recordMapFailure(manifest, stage, error);
-    if (failure.exhausted) {
-      throw new ExportHandoffError(
-        "MAP_WORKER_EXHAUSTED",
-        `${segmentId} failed both MAP Worker attempts`,
-        {
-          diagnosticCode: failure.receipt.diagnosticCode,
-          diagnosticsDir: stage.diagnosticsDir,
-        },
-      );
-    }
     throw new ExportHandoffError(error.code || "MAP_WORKER_FAILED", error.message, {
       ...error.details,
       receipt: failure.receipt,
-      nextDispatch: failure.nextDispatch,
     });
   }
 
@@ -4117,6 +4102,16 @@ async function publishHandoffInternal(workDir, options = {}, dependencies = {}) 
     );
   }
   const evidenceIndexText = `${JSON.stringify(publishedEvidenceIndex, null, 2)}\n`;
+  const structuralDigest = `sha256:${sha256Text(canonicalStringify({
+    formatVersion: manifest.formatVersion,
+    sourceRevision: manifest.sourceRevision,
+    frameDigest: frozenFrame.frameDigest,
+    semanticCoverage,
+    reduced,
+    evidenceIndexDigest: publishedEvidenceIndex.integrity.indexDigest,
+  }))}`;
+  const handoffDigest = `sha256:${sha256Text(handoff)}`;
+  const evidenceIndexDigest = `sha256:${sha256Text(evidenceIndexText)}`;
   if (
     manifest.formatVersion === CURRENT_WORKFLOW_VERSION &&
     evidenceIndexText.length > manifest.maxEvidenceIndexChars
@@ -4149,13 +4144,24 @@ async function publishHandoffInternal(workDir, options = {}, dependencies = {}) 
     const verifyIndex = dependencies.verifyEvidenceIndex || verifyEvidenceIndex;
     await verifyIndex(publishedEvidenceIndex);
   }
-  for (const target of [manifest.outputPath, manifest.evidenceIndexPath]) {
-    if (await pathExists(target)) {
-      throw new ExportHandoffError("OUTPUT_EXISTS", `Refusing to overwrite ${target}`);
+  const outputExists = await pathExists(manifest.outputPath);
+  const evidenceIndexExists = await pathExists(manifest.evidenceIndexPath);
+  if (outputExists || evidenceIndexExists) {
+    if (!outputExists || !evidenceIndexExists) {
+      const existing = outputExists ? manifest.outputPath : manifest.evidenceIndexPath;
+      throw new ExportHandoffError("OUTPUT_EXISTS", `Refusing to overwrite ${existing}`);
     }
-  }
-
-  if (manifest.formatVersion === LEGACY_WORKFLOW_VERSION) {
+    const [existingHandoff, existingEvidenceIndex] = await Promise.all([
+      fs.promises.readFile(manifest.outputPath, "utf8"),
+      fs.promises.readFile(manifest.evidenceIndexPath, "utf8"),
+    ]);
+    if (existingHandoff !== handoff || existingEvidenceIndex !== evidenceIndexText) {
+      throw new ExportHandoffError(
+        "OUTPUT_EXISTS",
+        "Existing publication pair does not match the verified normal Handoff candidate",
+      );
+    }
+  } else if (manifest.formatVersion === LEGACY_WORKFLOW_VERSION) {
     await publishAtomically(manifest.outputPath, handoff);
     await publishAtomically(manifest.evidenceIndexPath, evidenceIndexText);
   } else {
@@ -4165,6 +4171,25 @@ async function publishHandoffInternal(workDir, options = {}, dependencies = {}) 
     ], dependencies);
   }
   manifest.publicationDurationMs = durationSince(startedAtMs);
+  const publishedAt = new Date().toISOString();
+
+  if (manifest.formatVersion === CURRENT_WORKFLOW_VERSION) {
+    await recordNormalPublication(
+      workDir,
+      {
+        outputPath: manifest.outputPath,
+        evidenceIndexPath: manifest.evidenceIndexPath,
+        indexedAnchors: publishedEvidenceIndex.anchors.length,
+        sourceRevision: publishedEvidenceIndex.source.sourceRevision,
+        outputChars: handoff.length,
+        evidenceIndexChars: evidenceIndexText.length,
+        structuralDigest,
+        handoffDigest,
+        evidenceIndexDigest,
+      },
+      { verifyEvidenceIndex: dependencies.verifyEvidenceIndex || verifyEvidenceIndex },
+    );
+  }
 
   let cleanupStatus = "kept";
   if (!options.keepWorkdir) {
@@ -4178,7 +4203,6 @@ async function publishHandoffInternal(workDir, options = {}, dependencies = {}) 
       cleanupStatus = `failed: ${error.message}`;
     }
   }
-  const publishedAt = new Date().toISOString();
   return {
     formatVersion: manifest.formatVersion,
     sessionId: manifest.sessionId,
@@ -4190,16 +4214,9 @@ async function publishHandoffInternal(workDir, options = {}, dependencies = {}) 
     evidenceChars: manifest.evidenceChars,
     outputChars: handoff.length,
     evidenceIndexChars: evidenceIndexText.length,
-    structuralDigest: `sha256:${sha256Text(canonicalStringify({
-      formatVersion: manifest.formatVersion,
-      sourceRevision: manifest.sourceRevision,
-      frameDigest: frozenFrame.frameDigest,
-      semanticCoverage,
-      reduced,
-      evidenceIndexDigest: publishedEvidenceIndex.integrity.indexDigest,
-    }))}`,
-    handoffDigest: `sha256:${sha256Text(handoff)}`,
-    evidenceIndexDigest: `sha256:${sha256Text(evidenceIndexText)}`,
+    structuralDigest,
+    handoffDigest,
+    evidenceIndexDigest,
     reducePreflightDigest: isContinuationMapResultMode(manifest.mapResultMode)
       ? reducedDigest
       : null,

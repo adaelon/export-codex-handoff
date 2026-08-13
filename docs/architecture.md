@@ -86,6 +86,8 @@ The active Codex task supplies semantic compression. Scripts own evidence discov
 exact source addressing, structural validation, no-overwrite publication, and managed temporary cleanup.
 No script starts another Codex process.
 
+## Main Codex Convergence
+
 The accepted adjudication boundary is specified by
 [ADR-0016](./adr/0016-main-codex-adjudication-loop.md) and its
 [ordered slices](./slice-plan-main-codex-adjudication.md). MA1-MA5 are implemented: each new v2 run has an
@@ -97,12 +99,10 @@ core while a request or submitted-but-unapplied decision is active. Library-leve
 remain composable deterministic cores, and v1 runs without a durable adjudication contract keep their
 compatibility route. Application documents close one submitted decision immutably; success restores
 `RUNNING`, while failure closes the predecessor as `APPLICATION_FAILED` and activates exactly one
-linked successor request. The `publish_degraded` action is the successful terminal exception: it
-re-verifies retained evidence, publishes a bounded Degraded Handoff plus Evidence Index transactionally,
-and replays as `PUBLISHED` without promoting a failed REDUCE candidate or an unverifiable fact.
-MA5 installs the Main Codex operator loop over that state machine: every managed diagnostic is
-inspected, decided, applied, and resumed in the same run; repeated or unprovable corrections select
-explicit degradation rather than user adjudication or a clean run. The bounded `adjudicate --capture`
+linked successor request. A verified normal Handoff publication receipt is the only transition to
+`PUBLISHED`; a failed stage can never be converted into a terminal artifact. Main Codex installs the
+convergence loop over that state machine: every managed diagnostic is inspected, decided, applied,
+and resumed in the same run without user adjudication or a clean run. The bounded `adjudicate --capture`
 ingress admits only a pre-worker `MAP_WORKER_UNAVAILABLE` observation that occurs outside the
 managed scheduling command. MAP repair requests additionally persist
 the exact evidence-safe issue list, so a resumed Worker receives deterministic field-level guidance
@@ -116,17 +116,12 @@ adjudicate --inspect -> verify contract + document digests + complete event chai
 adjudicate --capture -> pre-worker capacity code allowlist -> schedule-map request policy
 adjudicate --submit -> exact run/request/digest/action check -> immutable decision document
                     -> numbered decision_submitted event -> APPLYING_ADJUDICATION
-adjudicate --apply -> retry named phase | regenerate named generation | relocate publication pair
-                  | publish evidence-bounded degraded pair
+adjudicate --apply -> repair named phase | regenerate named generation | relocate publication pair
   repair success -> immutable APPLIED application + numbered event -> RUNNING + exact resume command
-  degraded success -> immutable APPLIED application + numbered event -> PUBLISHED
   failure -> immutable APPLICATION_FAILED application + linked successor -> AWAITING_ADJUDICATION
   replay after success -> same result and event head; zero writes
-publish_degraded -> verify exact request/decision binding
-                 -> re-verify complete Evidence Index or build explicit verified subset
-                 -> retrieve byte-exact current goal + deterministic terminal state
-                 -> revalidate accepted MAP generations; omit failed REDUCE candidate
-                 -> deterministic degraded renderer + exclusive two-file transaction
+normal publication -> verify Handoff + Evidence Index pair and immutable workflow bindings
+                   -> append normal publication receipt -> PUBLISHED
 managed v2 CLI command -> replay state
   RUNNING -> invoke deterministic core
     success -> return unchanged command result

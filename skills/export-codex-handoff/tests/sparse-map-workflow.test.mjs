@@ -415,7 +415,9 @@ test("completion rejects a candidate that changed after a successful check", asy
       { code: "MAP_SUMMARY_CHANGED" },
     );
     const manifest = JSON.parse(await fs.promises.readFile(prepared.manifestPath, "utf8"));
-    assert.equal(manifest.segments[0].dispatch.attempt, 2);
+    assert.equal(manifest.segments[0].dispatch.attempt, 1);
+    assert.equal(manifest.segments[0].dispatch.dispatchId, prepared.dispatch.dispatchId);
+    assert.equal(manifest.segments[0].workerStatus, "failed");
     assert.equal(manifest.segments[0].lastDiagnosticCode, "MAP_SUMMARY_CHANGED");
   } finally {
     await fs.promises.rm(root, { recursive: true, force: true });
